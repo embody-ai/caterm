@@ -74,7 +74,7 @@ fn print_help() {
 }
 
 fn print_version() {
-    println!("caterm-agent {}", env!("CARGO_PKG_VERSION"));
+    println!("caterm {}", env!("CARGO_PKG_VERSION"));
 }
 
 fn help_text() -> String {
@@ -83,7 +83,7 @@ fn help_text() -> String {
 CLI agent for Caterm
 
 Usage:
-  caterm-agent [OPTIONS]
+  caterm [OPTIONS]
 
 Options:
   -h, --help       Print help
