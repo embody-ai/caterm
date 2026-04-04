@@ -9,7 +9,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{info, warn};
 
 use crate::config::RelayClientConfig;
-use crate::session_manager::{RequestEnvelope, RequestTx, ServerResponse, SessionRequest};
+use crate::session_manager::{
+    RequestEnvelope, RequestKind, RequestTx, ServerResponse, SessionRequest,
+};
 
 pub fn spawn_relay_client(config: RelayClientConfig, request_tx: RequestTx) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -74,8 +76,10 @@ async fn dispatch_request(
     let (response_tx, response_rx) = oneshot::channel();
     request_tx
         .send(RequestEnvelope {
-            request,
-            response_tx,
+            kind: RequestKind::Command {
+                request,
+                response_tx,
+            },
         })
         .map_err(|_| anyhow!("daemon request loop is not running"))?;
 

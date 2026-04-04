@@ -11,8 +11,8 @@ use tracing::info;
 
 use crate::config::DaemonConfig;
 use crate::session_manager::{
-    ClientOptions, ServerEvent, SessionManagerServer, SessionRequest, default_socket_path,
-    is_server_running, send_client_request,
+    ClientOptions, ServerEvent, SessionManagerServer, SessionRequest, attach_client_stream,
+    default_socket_path, is_server_running, send_client_request,
 };
 
 #[tokio::main]
@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
             server.run().await
         }
         Mode::Status => run_status_command(&client_options).await,
+        Mode::Attach => run_attach_command(&client_options).await,
         Mode::NewSession { name } => {
             run_client_command(&client_options, SessionRequest::CreateSession { name }).await
         }
@@ -157,6 +158,7 @@ struct Command {
 enum Mode {
     Start,
     Status,
+    Attach,
     NewSession {
         name: Option<String>,
     },
@@ -220,6 +222,10 @@ impl Command {
                 }
                 "status" if !mode_set => {
                     command.mode = Mode::Status;
+                    mode_set = true;
+                }
+                "attach" if !mode_set => {
+                    command.mode = Mode::Attach;
                     mode_set = true;
                 }
                 "new-session" if !mode_set => {
@@ -341,6 +347,7 @@ Usage:
 Commands:
   start            Start the local Caterm server (default)
   status           Show whether the local Caterm server is running
+  attach           Subscribe to live daemon events
   new-session      Create a session with an initial window and pane
   new-window       Create a window in a session
   new-pane         Create a pane in a window
@@ -419,121 +426,135 @@ async fn run_status_command(options: &ClientOptions) -> Result<()> {
     Ok(())
 }
 
+async fn run_attach_command(options: &ClientOptions) -> Result<()> {
+    let mut lines = attach_client_stream(options).await?;
+    let mut stdout = io::stdout();
+
+    while let Some(line) = lines.next_line().await? {
+        let event: ServerEvent = serde_json::from_str(&line)?;
+        let rendered = render_event(&SessionRequest::Attach, &event);
+        if rendered.is_empty() {
+            continue;
+        }
+
+        stdout.write_all(rendered.as_bytes()).await?;
+        stdout.write_all(b"\n").await?;
+        stdout.flush().await?;
+    }
+
+    Ok(())
+}
+
 fn render_response(request: &SessionRequest, events: &[ServerEvent]) -> String {
     let mut lines = Vec::new();
-    let show_pty_output = matches!(request, SessionRequest::SendInput { .. });
 
     for event in events {
-        match event {
-            ServerEvent::SessionCreated { session } => {
-                lines.push(format!("Created session {} ({})", session.id, session.name));
-            }
-            ServerEvent::WindowCreated { session_id, window } => {
-                lines.push(format!(
-                    "Created window {}:{} ({}) in session {}",
-                    window.index, window.id, window.name, session_id
-                ));
-            }
-            ServerEvent::PaneCreated {
-                session_id,
-                window_id,
-                pane,
-            } => {
-                lines.push(format!(
-                    "Created pane {}:{} ({}) in session {}, window {}",
-                    pane.index, pane.id, pane.name, session_id, window_id
-                ));
-            }
-            ServerEvent::SessionDeleted { session_id } => {
-                lines.push(format!("Deleted session {}", session_id));
-            }
-            ServerEvent::WindowDeleted {
-                session_id,
-                window_id,
-            } => {
-                lines.push(format!(
-                    "Deleted window {} from session {}",
-                    window_id, session_id
-                ));
-            }
-            ServerEvent::PaneDeleted {
-                session_id,
-                window_id,
-                pane_id,
-            } => {
-                lines.push(format!(
-                    "Deleted pane {} from session {}, window {}",
-                    pane_id, session_id, window_id
-                ));
-            }
-            ServerEvent::PtyOutput { data, .. } => {
-                if show_pty_output {
-                    let trimmed = data.trim_end_matches(['\r', '\n']);
-                    if !trimmed.is_empty() {
-                        lines.push(trimmed.to_string());
-                    }
-                }
-            }
-            ServerEvent::PaneExited {
-                session_id,
-                window_id,
-                pane_id,
-                exit_code,
-            } => {
-                lines.push(format!(
-                    "Pane {} in session {}, window {} exited with code {}",
-                    pane_id, session_id, window_id, exit_code
-                ));
-            }
-            ServerEvent::SessionList { sessions } => {
-                if sessions.is_empty() {
-                    lines.push("No active sessions".to_string());
-                } else {
-                    lines.push("Sessions:".to_string());
-                    for session in sessions {
-                        lines.push(format!(
-                            "session {} ({}) active_window={}",
-                            session.id,
-                            session.name,
-                            session
-                                .active_window_index
-                                .map(|index| index.to_string())
-                                .unwrap_or_else(|| "-".to_string())
-                        ));
-                        for window in &session.windows {
-                            lines.push(format!(
-                                "  window {}:{} ({}) active_pane={}",
-                                window.index,
-                                window.id,
-                                window.name,
-                                window
-                                    .active_pane_index
-                                    .map(|index| index.to_string())
-                                    .unwrap_or_else(|| "-".to_string())
-                            ));
-                            for pane in &window.panes {
-                                let exit_suffix = pane
-                                    .exit_code
-                                    .map(|code| format!(" exit={code}"))
-                                    .unwrap_or_default();
-                                lines.push(format!(
-                                    "    pane {}:{} ({}) shell={}{}",
-                                    pane.index, pane.id, pane.name, pane.shell, exit_suffix
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-            ServerEvent::Snapshot { .. } => {}
-            ServerEvent::Pong => {
-                lines.push("Pong".to_string());
-            }
-            ServerEvent::Error { message } => {
-                lines.push(format!("Error: {message}"));
-            }
+        let rendered = render_event(request, event);
+        if !rendered.is_empty() {
+            lines.push(rendered);
         }
     }
 
     lines.join("\n")
+}
+
+fn render_event(request: &SessionRequest, event: &ServerEvent) -> String {
+    let show_pty_output = matches!(
+        request,
+        SessionRequest::SendInput { .. } | SessionRequest::Attach
+    );
+
+    match event {
+        ServerEvent::SessionCreated { session } => {
+            format!("Created session {} ({})", session.id, session.name)
+        }
+        ServerEvent::WindowCreated { session_id, window } => format!(
+            "Created window {}:{} ({}) in session {}",
+            window.index, window.id, window.name, session_id
+        ),
+        ServerEvent::PaneCreated {
+            session_id,
+            window_id,
+            pane,
+        } => format!(
+            "Created pane {}:{} ({}) in session {}, window {}",
+            pane.index, pane.id, pane.name, session_id, window_id
+        ),
+        ServerEvent::SessionDeleted { session_id } => {
+            format!("Deleted session {}", session_id)
+        }
+        ServerEvent::WindowDeleted {
+            session_id,
+            window_id,
+        } => format!("Deleted window {} from session {}", window_id, session_id),
+        ServerEvent::PaneDeleted {
+            session_id,
+            window_id,
+            pane_id,
+        } => format!(
+            "Deleted pane {} from session {}, window {}",
+            pane_id, session_id, window_id
+        ),
+        ServerEvent::PtyOutput { data, .. } => {
+            if show_pty_output {
+                data.trim_end_matches(['\r', '\n']).to_string()
+            } else {
+                String::new()
+            }
+        }
+        ServerEvent::PaneExited {
+            session_id,
+            window_id,
+            pane_id,
+            exit_code,
+        } => format!(
+            "Pane {} in session {}, window {} exited with code {}",
+            pane_id, session_id, window_id, exit_code
+        ),
+        ServerEvent::SessionList { sessions } => {
+            if sessions.is_empty() {
+                "No active sessions".to_string()
+            } else {
+                let mut lines = Vec::new();
+                lines.push("Sessions:".to_string());
+                for session in sessions {
+                    lines.push(format!(
+                        "session {} ({}) active_window={}",
+                        session.id,
+                        session.name,
+                        session
+                            .active_window_index
+                            .map(|index| index.to_string())
+                            .unwrap_or_else(|| "-".to_string())
+                    ));
+                    for window in &session.windows {
+                        lines.push(format!(
+                            "  window {}:{} ({}) active_pane={}",
+                            window.index,
+                            window.id,
+                            window.name,
+                            window
+                                .active_pane_index
+                                .map(|index| index.to_string())
+                                .unwrap_or_else(|| "-".to_string())
+                        ));
+                        for pane in &window.panes {
+                            let exit_suffix = pane
+                                .exit_code
+                                .map(|code| format!(" exit={code}"))
+                                .unwrap_or_default();
+                            lines.push(format!(
+                                "    pane {}:{} ({}) shell={}{}",
+                                pane.index, pane.id, pane.name, pane.shell, exit_suffix
+                            ));
+                        }
+                    }
+                }
+                lines.join("\n")
+            }
+        }
+        ServerEvent::Snapshot { .. } => String::new(),
+        ServerEvent::Pong => "Pong".to_string(),
+        ServerEvent::Error { message } => format!("Error: {message}"),
+    }
 }

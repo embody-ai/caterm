@@ -240,3 +240,28 @@ fn status_command_reports_running_and_stopped_states() {
     assert!(stopped.status.success(), "{}", stdout_text(&stopped));
     assert!(stdout_text(&stopped).contains("Caterm daemon is not running"));
 }
+
+#[test]
+fn attach_streams_live_events() {
+    let daemon = TestDaemon::start();
+
+    let mut attach = Command::new(bin_path())
+        .arg("--socket")
+        .arg(&daemon.socket_path)
+        .arg("attach")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start attach client");
+
+    thread::sleep(Duration::from_millis(100));
+
+    let create = daemon.run(&["new-session", "work"]);
+    assert!(create.status.success(), "{}", stdout_text(&create));
+
+    thread::sleep(Duration::from_millis(200));
+    let _ = attach.kill();
+    let output = attach.wait_with_output().expect("collect attach output");
+    let stdout = stdout_text(&output);
+    assert!(stdout.contains("Created session 1 (work)"), "{stdout}");
+}

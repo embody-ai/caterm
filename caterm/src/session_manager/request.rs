@@ -12,6 +12,7 @@ pub struct ClientOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum SessionRequest {
+    Attach,
     CreateSession {
         name: Option<String>,
     },

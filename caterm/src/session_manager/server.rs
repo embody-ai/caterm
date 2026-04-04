@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tokio::time::{Duration, sleep};
+use tokio::time::{self, Duration, sleep};
 use tracing::{info, warn};
 
 use crate::config::DaemonConfig;
@@ -23,8 +23,25 @@ use super::window::Window;
 pub(crate) type RequestTx = mpsc::UnboundedSender<RequestEnvelope>;
 
 pub(crate) struct RequestEnvelope {
-    pub request: SessionRequest,
-    pub response_tx: oneshot::Sender<ServerResponse>,
+    pub kind: RequestKind,
+}
+
+pub(crate) enum RequestKind {
+    Command {
+        request: SessionRequest,
+        response_tx: oneshot::Sender<ServerResponse>,
+    },
+    Attach {
+        attached_tx: oneshot::Sender<AttachedClient>,
+    },
+    Detach {
+        subscriber_id: u64,
+    },
+}
+
+pub(crate) struct AttachedClient {
+    pub subscriber_id: u64,
+    pub events_rx: mpsc::UnboundedReceiver<ServerEvent>,
 }
 
 pub struct SessionManagerServer {
@@ -34,6 +51,8 @@ pub struct SessionManagerServer {
     next_session_id: u64,
     next_window_id: u64,
     next_pane_id: u64,
+    next_subscriber_id: u64,
+    subscribers: BTreeMap<u64, mpsc::UnboundedSender<ServerEvent>>,
 }
 
 impl SessionManagerServer {
@@ -45,6 +64,8 @@ impl SessionManagerServer {
             next_session_id: 1,
             next_window_id: 1,
             next_pane_id: 1,
+            next_subscriber_id: 1,
+            subscribers: BTreeMap::new(),
         }
     }
 
@@ -75,6 +96,7 @@ impl SessionManagerServer {
             .relay
             .clone()
             .map(|config| crate::relay::spawn_relay_client(config, request_tx.clone()));
+        let mut runtime_tick = time::interval(Duration::from_millis(100));
 
         loop {
             tokio::select! {
@@ -83,20 +105,40 @@ impl SessionManagerServer {
                         break;
                     };
 
-                    let should_stop = matches!(request.request, SessionRequest::Stop);
-                    let response = match self.handle_request(request.request).await {
-                        Ok(events) => ServerResponse { ok: true, events },
-                        Err(error) => ServerResponse {
-                            ok: false,
-                            events: vec![ServerEvent::Error {
-                                message: error.to_string(),
-                            }],
-                        },
-                    };
+                    match request.kind {
+                        RequestKind::Command { request, response_tx } => {
+                            let should_stop = matches!(request, SessionRequest::Stop);
+                            let response = match self.handle_request(request).await {
+                                Ok(events) => {
+                                    self.broadcast_events(&events);
+                                    ServerResponse { ok: true, events }
+                                }
+                                Err(error) => ServerResponse {
+                                    ok: false,
+                                    events: vec![ServerEvent::Error {
+                                        message: error.to_string(),
+                                    }],
+                                },
+                            };
 
-                    let _ = request.response_tx.send(response);
-                    if should_stop {
-                        break;
+                            let _ = response_tx.send(response);
+                            if should_stop {
+                                break;
+                            }
+                        }
+                        RequestKind::Attach { attached_tx } => {
+                            let attached = self.attach_client();
+                            let _ = attached_tx.send(attached);
+                        }
+                        RequestKind::Detach { subscriber_id } => {
+                            self.subscribers.remove(&subscriber_id);
+                        }
+                    }
+                }
+                _ = runtime_tick.tick() => {
+                    let events = self.collect_runtime_events()?;
+                    if !events.is_empty() {
+                        self.broadcast_events(&events);
                     }
                 }
                 signal_result = tokio::signal::ctrl_c() => {
@@ -129,6 +171,9 @@ impl SessionManagerServer {
         let mut events = self.collect_runtime_events()?;
 
         match request {
+            SessionRequest::Attach => {
+                bail!("attach requires a streaming local connection");
+            }
             SessionRequest::CreateSession { name } => {
                 events.extend(self.create_session(name).await?)
             }
@@ -171,6 +216,30 @@ impl SessionManagerServer {
         }
 
         Ok(events)
+    }
+
+    fn attach_client(&mut self) -> AttachedClient {
+        let subscriber_id = self.next_subscriber_id;
+        self.next_subscriber_id += 1;
+        let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+        let snapshot = self.snapshot();
+        let _ = events_tx.send(ServerEvent::Snapshot { snapshot });
+        self.subscribers.insert(subscriber_id, events_tx);
+
+        AttachedClient {
+            subscriber_id,
+            events_rx: {
+                let (bridge_tx, bridge_rx) = mpsc::unbounded_channel();
+                tokio::spawn(async move {
+                    while let Some(event) = events_rx.recv().await {
+                        if bridge_tx.send(event).is_err() {
+                            break;
+                        }
+                    }
+                });
+                bridge_rx
+            },
+        }
     }
 
     async fn create_session(&mut self, name: Option<String>) -> Result<Vec<ServerEvent>> {
@@ -635,6 +704,17 @@ impl SessionManagerServer {
 
         Ok(events)
     }
+
+    fn broadcast_events(&mut self, events: &[ServerEvent]) {
+        self.subscribers.retain(|_, tx| {
+            for event in events {
+                if tx.send(event.clone()).is_err() {
+                    return false;
+                }
+            }
+            true
+        });
+    }
 }
 
 fn spawn_local_listener(listener: UnixListener, request_tx: RequestTx) -> JoinHandle<()> {
@@ -669,11 +749,47 @@ async fn handle_local_connection(stream: UnixStream, request_tx: RequestTx) -> R
     let request = serde_json::from_str::<SessionRequest>(&line)
         .with_context(|| "failed to decode session request")?;
 
+    if matches!(request, SessionRequest::Attach) {
+        let (attached_tx, attached_rx) = oneshot::channel();
+        request_tx
+            .send(RequestEnvelope {
+                kind: RequestKind::Attach { attached_tx },
+            })
+            .map_err(|_| anyhow!("server request loop has stopped"))?;
+
+        let AttachedClient {
+            subscriber_id,
+            mut events_rx,
+        } = attached_rx
+            .await
+            .map_err(|_| anyhow!("server request loop dropped attach response"))?;
+
+        while let Some(event) = events_rx.recv().await {
+            let payload = serde_json::to_string(&event)?;
+            if writer.write_all(payload.as_bytes()).await.is_err() {
+                break;
+            }
+            if writer.write_all(b"\n").await.is_err() {
+                break;
+            }
+            if writer.flush().await.is_err() {
+                break;
+            }
+        }
+
+        let _ = request_tx.send(RequestEnvelope {
+            kind: RequestKind::Detach { subscriber_id },
+        });
+        return Ok(());
+    }
+
     let (response_tx, response_rx) = oneshot::channel();
     request_tx
         .send(RequestEnvelope {
-            request,
-            response_tx,
+            kind: RequestKind::Command {
+                request,
+                response_tx,
+            },
         })
         .map_err(|_| anyhow!("server request loop has stopped"))?;
 
@@ -716,6 +832,27 @@ pub async fn send_client_request(
     let response = serde_json::from_str::<ServerResponse>(&response_line)?;
 
     Ok(response)
+}
+
+pub async fn attach_client_stream(
+    options: &ClientOptions,
+) -> Result<tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>> {
+    let stream = UnixStream::connect(&options.socket_path)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to connect to Caterm server at {}",
+                options.socket_path.display()
+            )
+        })?;
+    let (reader, mut writer) = stream.into_split();
+    let payload = serde_json::to_string(&SessionRequest::Attach)?;
+
+    writer.write_all(payload.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+
+    Ok(BufReader::new(reader).lines())
 }
 
 pub fn default_socket_path() -> PathBuf {
