@@ -303,6 +303,10 @@ fn attach_target_filters_to_a_single_pane() {
         .expect("collect targeted attach output");
     let stdout = stdout_text(&output);
 
+    assert!(
+        stdout.contains("client_active session=1 window=1 pane=1"),
+        "{stdout}"
+    );
     assert!(stdout.contains("session 1 (work)"), "{stdout}");
     assert!(!stdout.contains("session 2 (personal)"), "{stdout}");
     assert!(stdout.contains("hello-work"), "{stdout}");

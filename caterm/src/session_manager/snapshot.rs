@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerSnapshot {
+    pub active_session_id: Option<u64>,
+    pub active_window_id: Option<u64>,
+    pub active_pane_id: Option<u64>,
     pub sessions: Vec<SessionSnapshot>,
 }
 

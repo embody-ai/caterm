@@ -597,6 +597,9 @@ fn render_event(event: &ServerEvent) -> String {
             pane_id, session_id, window_id, exit_code
         ),
         ServerEvent::SessionList { sessions } => render_snapshot(&ServerSnapshot {
+            active_session_id: None,
+            active_window_id: None,
+            active_pane_id: None,
             sessions: sessions.clone(),
         }),
         ServerEvent::Snapshot { snapshot } => render_snapshot(snapshot),
@@ -611,6 +614,26 @@ fn render_snapshot(snapshot: &ServerSnapshot) -> String {
     }
 
     let mut lines = Vec::new();
+    if snapshot.active_session_id.is_some()
+        || snapshot.active_window_id.is_some()
+        || snapshot.active_pane_id.is_some()
+    {
+        lines.push(format!(
+            "client_active session={} window={} pane={}",
+            snapshot
+                .active_session_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            snapshot
+                .active_window_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            snapshot
+                .active_pane_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ));
+    }
     lines.push("Sessions:".to_string());
     for session in &snapshot.sessions {
         lines.push(format!(

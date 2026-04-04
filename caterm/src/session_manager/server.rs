@@ -47,7 +47,7 @@ pub(crate) struct AttachedClient {
 }
 
 struct Subscriber {
-    filter: AttachFilter,
+    client_state: ClientState,
     events_tx: mpsc::UnboundedSender<ServerEvent>,
 }
 
@@ -56,6 +56,14 @@ struct AttachFilter {
     session_id: Option<u64>,
     window_id: Option<u64>,
     pane_id: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ClientState {
+    filter: AttachFilter,
+    active_session_id: Option<u64>,
+    active_window_id: Option<u64>,
+    active_pane_id: Option<u64>,
 }
 
 pub struct SessionManagerServer {
@@ -509,13 +517,19 @@ impl SessionManagerServer {
 
     fn attach_client(&mut self, request: SessionRequest) -> Result<AttachedClient> {
         let filter = self.resolve_attach_filter(request)?;
+        let client_state = build_client_state(&self.sessions, filter);
         let subscriber_id = self.next_subscriber_id;
         self.next_subscriber_id += 1;
         let (events_tx, mut events_rx) = mpsc::unbounded_channel();
-        let snapshot = filter.filter_snapshot(self.snapshot());
+        let snapshot = snapshot_for_client(&self.snapshot(), client_state);
         let _ = events_tx.send(ServerEvent::Snapshot { snapshot });
-        self.subscribers
-            .insert(subscriber_id, Subscriber { filter, events_tx });
+        self.subscribers.insert(
+            subscriber_id,
+            Subscriber {
+                client_state,
+                events_tx,
+            },
+        );
 
         Ok(AttachedClient {
             subscriber_id,
@@ -810,6 +824,9 @@ impl SessionManagerServer {
 
     fn snapshot(&self) -> ServerSnapshot {
         ServerSnapshot {
+            active_session_id: None,
+            active_window_id: None,
+            active_pane_id: None,
             sessions: self.sessions.values().map(Session::snapshot).collect(),
         }
     }
@@ -850,12 +867,21 @@ impl SessionManagerServer {
     }
 
     fn broadcast_events(&mut self, events: &[ServerEvent]) {
+        let base_snapshot = self.snapshot();
+        let sessions = &self.sessions;
         self.subscribers.retain(|_, subscriber| {
+            refresh_client_state(sessions, &mut subscriber.client_state);
             for event in events {
-                if !subscriber.filter.matches_event(event) {
+                if !subscriber.client_state.filter.matches_event(event) {
                     continue;
                 }
-                if subscriber.events_tx.send(event.clone()).is_err() {
+                let outbound = match event {
+                    ServerEvent::Snapshot { .. } => ServerEvent::Snapshot {
+                        snapshot: snapshot_for_client(&base_snapshot, subscriber.client_state),
+                    },
+                    _ => event.clone(),
+                };
+                if subscriber.events_tx.send(outbound).is_err() {
                     return false;
                 }
             }
@@ -902,49 +928,10 @@ impl AttachFilter {
                 .iter()
                 .any(|session| self.session_id.is_none() || self.session_id == Some(session.id)),
             ServerEvent::Snapshot { snapshot } => {
-                !self.filter_snapshot(snapshot.clone()).sessions.is_empty()
+                !filter_snapshot(snapshot, *self).sessions.is_empty()
             }
             ServerEvent::Pong | ServerEvent::Error { .. } => true,
         }
-    }
-
-    fn filter_snapshot(&self, mut snapshot: ServerSnapshot) -> ServerSnapshot {
-        if let Some(session_id) = self.session_id {
-            snapshot.sessions.retain(|session| session.id == session_id);
-        }
-
-        if let Some(window_id) = self.window_id {
-            for session in &mut snapshot.sessions {
-                session.windows.retain(|window| window.id == window_id);
-                session.active_window_id = session
-                    .active_window_id
-                    .filter(|active_window_id| *active_window_id == window_id);
-                session.active_window_index = session.windows.first().map(|window| window.index);
-            }
-            snapshot
-                .sessions
-                .retain(|session| !session.windows.is_empty());
-        }
-
-        if let Some(pane_id) = self.pane_id {
-            for session in &mut snapshot.sessions {
-                for window in &mut session.windows {
-                    window.panes.retain(|pane| pane.id == pane_id);
-                    window.active_pane_id = window
-                        .active_pane_id
-                        .filter(|active_pane_id| *active_pane_id == pane_id);
-                    window.active_pane_index = window.panes.first().map(|pane| pane.index);
-                }
-                session.windows.retain(|window| !window.panes.is_empty());
-                session.active_window_id = session.windows.first().map(|window| window.id);
-                session.active_window_index = session.windows.first().map(|window| window.index);
-            }
-            snapshot
-                .sessions
-                .retain(|session| !session.windows.is_empty());
-        }
-
-        snapshot
     }
 
     fn matches_session(&self, session_id: u64) -> bool {
@@ -960,6 +947,219 @@ impl AttachFilter {
         self.matches_window(session_id, window_id)
             && (self.pane_id.is_none() || self.pane_id == Some(pane_id))
     }
+}
+
+fn build_client_state(sessions: &BTreeMap<u64, Session>, filter: AttachFilter) -> ClientState {
+    let mut client_state = ClientState {
+        filter,
+        active_session_id: filter.session_id,
+        active_window_id: filter.window_id,
+        active_pane_id: filter.pane_id,
+    };
+    refresh_client_state(sessions, &mut client_state);
+    client_state
+}
+
+fn refresh_client_state(sessions: &BTreeMap<u64, Session>, client_state: &mut ClientState) {
+    if !client_state
+        .active_session_id
+        .map(|session_id| session_exists(sessions, client_state.filter, session_id))
+        .unwrap_or(false)
+    {
+        client_state.active_session_id = default_session_id(sessions, client_state.filter);
+    }
+
+    if !client_state
+        .active_window_id
+        .map(|window_id| {
+            window_exists(
+                sessions,
+                client_state.filter,
+                client_state.active_session_id,
+                window_id,
+            )
+        })
+        .unwrap_or(false)
+    {
+        client_state.active_window_id = default_window_id(
+            sessions,
+            client_state.filter,
+            client_state.active_session_id,
+        );
+    }
+
+    if !client_state
+        .active_pane_id
+        .map(|pane_id| {
+            pane_exists(
+                sessions,
+                client_state.filter,
+                client_state.active_session_id,
+                client_state.active_window_id,
+                pane_id,
+            )
+        })
+        .unwrap_or(false)
+    {
+        client_state.active_pane_id = default_pane_id(
+            sessions,
+            client_state.filter,
+            client_state.active_session_id,
+            client_state.active_window_id,
+        );
+    }
+}
+
+fn session_exists(
+    sessions: &BTreeMap<u64, Session>,
+    filter: AttachFilter,
+    session_id: u64,
+) -> bool {
+    filter.matches_session(session_id) && sessions.contains_key(&session_id)
+}
+
+fn window_exists(
+    sessions: &BTreeMap<u64, Session>,
+    filter: AttachFilter,
+    active_session_id: Option<u64>,
+    window_id: u64,
+) -> bool {
+    sessions.values().any(|session| {
+        if active_session_id.is_some() && active_session_id != Some(session.id) {
+            return false;
+        }
+        session
+            .windows
+            .get(&window_id)
+            .map(|window| filter.matches_window(session.id, window.id))
+            .unwrap_or(false)
+    })
+}
+
+fn pane_exists(
+    sessions: &BTreeMap<u64, Session>,
+    filter: AttachFilter,
+    active_session_id: Option<u64>,
+    active_window_id: Option<u64>,
+    pane_id: u64,
+) -> bool {
+    sessions.values().any(|session| {
+        if active_session_id.is_some() && active_session_id != Some(session.id) {
+            return false;
+        }
+        session.windows.values().any(|window| {
+            if active_window_id.is_some() && active_window_id != Some(window.id) {
+                return false;
+            }
+            window
+                .panes
+                .get(&pane_id)
+                .map(|pane| filter.matches_pane(session.id, window.id, pane.id))
+                .unwrap_or(false)
+        })
+    })
+}
+
+fn default_session_id(sessions: &BTreeMap<u64, Session>, filter: AttachFilter) -> Option<u64> {
+    filter
+        .session_id
+        .or_else(|| sessions.keys().next().copied())
+}
+
+fn default_window_id(
+    sessions: &BTreeMap<u64, Session>,
+    filter: AttachFilter,
+    active_session_id: Option<u64>,
+) -> Option<u64> {
+    if let Some(window_id) = filter.window_id {
+        return Some(window_id);
+    }
+
+    let session_id = active_session_id?;
+    let session = sessions.get(&session_id)?;
+    session
+        .active_window_id
+        .filter(|window_id| filter.matches_window(session_id, *window_id))
+        .or_else(|| {
+            session
+                .windows
+                .values()
+                .find(|window| filter.matches_window(session_id, window.id))
+                .map(|window| window.id)
+        })
+}
+
+fn default_pane_id(
+    sessions: &BTreeMap<u64, Session>,
+    filter: AttachFilter,
+    active_session_id: Option<u64>,
+    active_window_id: Option<u64>,
+) -> Option<u64> {
+    if let Some(pane_id) = filter.pane_id {
+        return Some(pane_id);
+    }
+
+    let session = sessions.get(&active_session_id?)?;
+    let window = session.windows.get(&active_window_id?)?;
+    window
+        .active_pane_id
+        .filter(|pane_id| filter.matches_pane(session.id, window.id, *pane_id))
+        .or_else(|| {
+            window
+                .panes
+                .values()
+                .find(|pane| filter.matches_pane(session.id, window.id, pane.id))
+                .map(|pane| pane.id)
+        })
+}
+
+fn snapshot_for_client(snapshot: &ServerSnapshot, client_state: ClientState) -> ServerSnapshot {
+    let mut snapshot = filter_snapshot(snapshot, client_state.filter);
+    snapshot.active_session_id = client_state.active_session_id;
+    snapshot.active_window_id = client_state.active_window_id;
+    snapshot.active_pane_id = client_state.active_pane_id;
+    snapshot
+}
+
+fn filter_snapshot(snapshot: &ServerSnapshot, filter: AttachFilter) -> ServerSnapshot {
+    let mut snapshot = snapshot.clone();
+
+    if let Some(session_id) = filter.session_id {
+        snapshot.sessions.retain(|session| session.id == session_id);
+    }
+
+    if let Some(window_id) = filter.window_id {
+        for session in &mut snapshot.sessions {
+            session.windows.retain(|window| window.id == window_id);
+            session.active_window_id = session
+                .active_window_id
+                .filter(|active_window_id| *active_window_id == window_id);
+            session.active_window_index = session.windows.first().map(|window| window.index);
+        }
+        snapshot
+            .sessions
+            .retain(|session| !session.windows.is_empty());
+    }
+
+    if let Some(pane_id) = filter.pane_id {
+        for session in &mut snapshot.sessions {
+            for window in &mut session.windows {
+                window.panes.retain(|pane| pane.id == pane_id);
+                window.active_pane_id = window
+                    .active_pane_id
+                    .filter(|active_pane_id| *active_pane_id == pane_id);
+                window.active_pane_index = window.panes.first().map(|pane| pane.index);
+            }
+            session.windows.retain(|window| !window.panes.is_empty());
+            session.active_window_id = session.windows.first().map(|window| window.id);
+            session.active_window_index = session.windows.first().map(|window| window.index);
+        }
+        snapshot
+            .sessions
+            .retain(|session| !session.windows.is_empty());
+    }
+
+    snapshot
 }
 
 fn spawn_local_listener(listener: UnixListener, request_tx: RequestTx) -> JoinHandle<()> {
