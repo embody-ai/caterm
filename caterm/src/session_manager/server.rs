@@ -227,6 +227,24 @@ impl SessionManagerServer {
                     outcome.broadcast_events.splice(0..0, runtime_events);
                     outcome
                 }),
+            SessionRequest::SelectWindow { session, target } => self
+                .select_window(&session, &target)
+                .await
+                .map(|mut outcome| {
+                    outcome.broadcast_events.splice(0..0, runtime_events);
+                    outcome
+                }),
+            SessionRequest::SelectPane {
+                session,
+                window,
+                target,
+            } => self
+                .select_pane(&session, &window, &target)
+                .await
+                .map(|mut outcome| {
+                    outcome.broadcast_events.splice(0..0, runtime_events);
+                    outcome
+                }),
             SessionRequest::DeleteSession { target } => {
                 self.delete_session(&target).await.map(|mut outcome| {
                     outcome.broadcast_events.splice(0..0, runtime_events);
@@ -512,6 +530,71 @@ impl SessionManagerServer {
                     snapshot: self.snapshot(),
                 },
             ],
+        })
+    }
+
+    async fn select_window(
+        &mut self,
+        session_target: &str,
+        target: &str,
+    ) -> Result<CommandOutcome> {
+        let session_id = self.resolve_session_id(session_target)?;
+        let window_id = self.resolve_window_id(session_id, target)?;
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| anyhow!("session {session_id} not found"))?;
+        session.active_window_id = Some(window_id);
+
+        let window_snapshot = session
+            .windows
+            .get(&window_id)
+            .expect("selected window missing")
+            .snapshot();
+
+        Ok(CommandOutcome {
+            result: CommandResult::WindowSelected {
+                session_id,
+                window: window_snapshot,
+            },
+            broadcast_events: vec![ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            }],
+        })
+    }
+
+    async fn select_pane(
+        &mut self,
+        session_target: &str,
+        window_target: &str,
+        target: &str,
+    ) -> Result<CommandOutcome> {
+        let session_id = self.resolve_session_id(session_target)?;
+        let window_id = self.resolve_window_id(session_id, window_target)?;
+        let pane_id = self.resolve_pane_id(session_id, window_id, target)?;
+
+        let window = self
+            .sessions
+            .get_mut(&session_id)
+            .and_then(|session| session.windows.get_mut(&window_id))
+            .ok_or_else(|| anyhow!("window {window_id} not found"))?;
+        window.active_pane_id = Some(pane_id);
+
+        let pane_snapshot = window
+            .panes
+            .get(&pane_id)
+            .expect("selected pane missing")
+            .snapshot();
+
+        Ok(CommandOutcome {
+            result: CommandResult::PaneSelected {
+                session_id,
+                window_id,
+                pane: pane_snapshot,
+            },
+            broadcast_events: vec![ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            }],
         })
     }
 

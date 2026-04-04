@@ -134,6 +134,53 @@ fn new_window_and_new_pane_are_visible_in_list() {
 }
 
 #[test]
+fn select_commands_update_active_targets() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+    assert!(
+        daemon
+            .run(&["new-window", "work", "editor"])
+            .status
+            .success()
+    );
+    assert!(
+        daemon
+            .run(&["new-pane", "work", "editor", "logs"])
+            .status
+            .success()
+    );
+
+    let select_window = daemon.run(&["select-window", "work", "editor"]);
+    assert!(
+        select_window.status.success(),
+        "{}",
+        stdout_text(&select_window)
+    );
+    assert!(stdout_text(&select_window).contains("Selected window 1:2 (editor) in session 1"));
+
+    let select_pane = daemon.run(&["select-pane", "work", "editor", "logs"]);
+    assert!(
+        select_pane.status.success(),
+        "{}",
+        stdout_text(&select_pane)
+    );
+    assert!(stdout_text(&select_pane).contains("Selected pane 1:3 (logs) in session 1, window 2"));
+
+    let list = daemon.run(&["list"]);
+    assert!(list.status.success(), "{}", stdout_text(&list));
+    let stdout = stdout_text(&list);
+    assert!(
+        stdout.contains("session 1 (work) active_window=1"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("window 1:2 (editor) active_pane=1"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn send_input_acknowledges_delivery() {
     let daemon = TestDaemon::start();
 

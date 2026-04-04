@@ -94,6 +94,28 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Mode::SelectWindow { session, target } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::SelectWindow { session, target },
+            )
+            .await
+        }
+        Mode::SelectPane {
+            session,
+            window,
+            target,
+        } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::SelectPane {
+                    session,
+                    window,
+                    target,
+                },
+            )
+            .await
+        }
         Mode::KillSession { target } => {
             run_client_command(&client_options, SessionRequest::DeleteSession { target }).await
         }
@@ -179,6 +201,15 @@ enum Mode {
         session: String,
         window: String,
         name: Option<String>,
+    },
+    SelectWindow {
+        session: String,
+        target: String,
+    },
+    SelectPane {
+        session: String,
+        window: String,
+        target: String,
     },
     KillSession {
         target: String,
@@ -272,6 +303,33 @@ impl Command {
                         session,
                         window,
                         name,
+                    };
+                    mode_set = true;
+                }
+                "select-window" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("select-window requires a session id or name")?;
+                    let target = iter
+                        .next()
+                        .context("select-window requires a window id or name")?;
+                    command.mode = Mode::SelectWindow { session, target };
+                    mode_set = true;
+                }
+                "select-pane" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("select-pane requires a session id or name")?;
+                    let window = iter
+                        .next()
+                        .context("select-pane requires a window id or name")?;
+                    let target = iter
+                        .next()
+                        .context("select-pane requires a pane id or name")?;
+                    command.mode = Mode::SelectPane {
+                        session,
+                        window,
+                        target,
                     };
                     mode_set = true;
                 }
@@ -370,6 +428,8 @@ Commands:
   new-session      Create a session with an initial window and pane
   new-window       Create a window in a session
   new-pane         Create a pane in a window
+  select-window    Select the active window in a session
+  select-pane      Select the active pane in a window
   kill-session     Delete a session by id or name
   kill-window      Delete a window by id or name within a session
   kill-pane        Delete a pane by id or name within a window
@@ -525,6 +585,18 @@ fn render_command_result(result: &CommandResult) -> String {
             pane,
         } => format!(
             "Created pane {}:{} ({}) in session {}, window {}",
+            pane.index, pane.id, pane.name, session_id, window_id
+        ),
+        CommandResult::WindowSelected { session_id, window } => format!(
+            "Selected window {}:{} ({}) in session {}",
+            window.index, window.id, window.name, session_id
+        ),
+        CommandResult::PaneSelected {
+            session_id,
+            window_id,
+            pane,
+        } => format!(
+            "Selected pane {}:{} ({}) in session {}, window {}",
             pane.index, pane.id, pane.name, session_id, window_id
         ),
         CommandResult::SessionDeleted { session_id } => format!("Deleted session {}", session_id),

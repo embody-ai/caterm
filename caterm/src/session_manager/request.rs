@@ -27,6 +27,15 @@ pub enum SessionRequest {
         window: String,
         name: Option<String>,
     },
+    SelectWindow {
+        session: String,
+        target: String,
+    },
+    SelectPane {
+        session: String,
+        window: String,
+        target: String,
+    },
     DeleteSession {
         target: String,
     },

@@ -10,7 +10,7 @@
 
 ## Session, Window, Pane Model
 
-- [ ] Add `select-window` and `select-pane` commands
+- [x] Add `select-window` and `select-pane` commands
 - [ ] Add `rename-session`, `rename-window`, and `rename-pane` commands
 - [ ] Define lifecycle rules for last-pane/last-window deletion
 - [ ] Add automatic cleanup rules for empty windows and empty sessions

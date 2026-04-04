@@ -27,6 +27,15 @@ pub enum CommandResult {
         window_id: u64,
         pane: PaneSnapshot,
     },
+    WindowSelected {
+        session_id: u64,
+        window: WindowSnapshot,
+    },
+    PaneSelected {
+        session_id: u64,
+        window_id: u64,
+        pane: PaneSnapshot,
+    },
     SessionDeleted {
         session_id: u64,
     },
