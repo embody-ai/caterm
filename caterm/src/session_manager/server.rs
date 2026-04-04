@@ -1045,6 +1045,8 @@ impl SessionManagerServer {
             let _ = self.delete_session(&id.to_string()).await;
         }
 
+        prune_empty_containers(&mut self.sessions);
+
         Ok(())
     }
 
@@ -1399,6 +1401,98 @@ fn filter_snapshot(snapshot: &ServerSnapshot, filter: AttachFilter) -> ServerSna
     }
 
     snapshot
+}
+
+fn prune_empty_containers(sessions: &mut BTreeMap<u64, Session>) {
+    for session in sessions.values_mut() {
+        session.windows.retain(|_, window| !window.panes.is_empty());
+        if session
+            .active_window_id
+            .is_some_and(|window_id| !session.windows.contains_key(&window_id))
+        {
+            session.active_window_id = session.windows.keys().next().copied();
+        }
+    }
+
+    sessions.retain(|_, session| !session.windows.is_empty());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prune_empty_containers_removes_empty_windows_and_sessions() {
+        let mut sessions = BTreeMap::new();
+        sessions.insert(
+            1,
+            Session {
+                id: 1,
+                name: "work".to_string(),
+                windows: BTreeMap::from([
+                    (
+                        10,
+                        Window {
+                            id: 10,
+                            index: 0,
+                            name: "empty".to_string(),
+                            panes: BTreeMap::new(),
+                            active_pane_id: None,
+                        },
+                    ),
+                    (
+                        11,
+                        Window {
+                            id: 11,
+                            index: 1,
+                            name: "kept".to_string(),
+                            panes: BTreeMap::from([(
+                                20,
+                                Pane {
+                                    id: 20,
+                                    index: 0,
+                                    name: "pane-20".to_string(),
+                                    shell: "sh".to_string(),
+                                    pty: crate::pty::PtySession::spawn("sh", 80, 24)
+                                        .expect("spawn pty"),
+                                    output_rx: mpsc::unbounded_channel().1,
+                                    exit_code: None,
+                                },
+                            )]),
+                            active_pane_id: Some(20),
+                        },
+                    ),
+                ]),
+                active_window_id: Some(10),
+            },
+        );
+        sessions.insert(
+            2,
+            Session {
+                id: 2,
+                name: "empty-session".to_string(),
+                windows: BTreeMap::from([(
+                    12,
+                    Window {
+                        id: 12,
+                        index: 0,
+                        name: "empty".to_string(),
+                        panes: BTreeMap::new(),
+                        active_pane_id: None,
+                    },
+                )]),
+                active_window_id: Some(12),
+            },
+        );
+
+        prune_empty_containers(&mut sessions);
+
+        assert_eq!(sessions.len(), 1);
+        let session = sessions.get(&1).expect("kept session");
+        assert_eq!(session.windows.len(), 1);
+        assert!(session.windows.contains_key(&11));
+        assert_eq!(session.active_window_id, Some(11));
+    }
 }
 
 fn spawn_local_listener(listener: UnixListener, request_tx: RequestTx) -> JoinHandle<()> {
