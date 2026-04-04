@@ -116,6 +116,45 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Mode::RenameSession { target, name } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::RenameSession { target, name },
+            )
+            .await
+        }
+        Mode::RenameWindow {
+            session,
+            target,
+            name,
+        } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::RenameWindow {
+                    session,
+                    target,
+                    name,
+                },
+            )
+            .await
+        }
+        Mode::RenamePane {
+            session,
+            window,
+            target,
+            name,
+        } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::RenamePane {
+                    session,
+                    window,
+                    target,
+                    name,
+                },
+            )
+            .await
+        }
         Mode::KillSession { target } => {
             run_client_command(&client_options, SessionRequest::DeleteSession { target }).await
         }
@@ -210,6 +249,21 @@ enum Mode {
         session: String,
         window: String,
         target: String,
+    },
+    RenameSession {
+        target: String,
+        name: String,
+    },
+    RenameWindow {
+        session: String,
+        target: String,
+        name: String,
+    },
+    RenamePane {
+        session: String,
+        window: String,
+        target: String,
+        name: String,
     },
     KillSession {
         target: String,
@@ -333,6 +387,48 @@ impl Command {
                     };
                     mode_set = true;
                 }
+                "rename-session" if !mode_set => {
+                    let target = iter
+                        .next()
+                        .context("rename-session requires a session id or name")?;
+                    let name = iter.next().context("rename-session requires a new name")?;
+                    command.mode = Mode::RenameSession { target, name };
+                    mode_set = true;
+                }
+                "rename-window" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("rename-window requires a session id or name")?;
+                    let target = iter
+                        .next()
+                        .context("rename-window requires a window id or name")?;
+                    let name = iter.next().context("rename-window requires a new name")?;
+                    command.mode = Mode::RenameWindow {
+                        session,
+                        target,
+                        name,
+                    };
+                    mode_set = true;
+                }
+                "rename-pane" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("rename-pane requires a session id or name")?;
+                    let window = iter
+                        .next()
+                        .context("rename-pane requires a window id or name")?;
+                    let target = iter
+                        .next()
+                        .context("rename-pane requires a pane id or name")?;
+                    let name = iter.next().context("rename-pane requires a new name")?;
+                    command.mode = Mode::RenamePane {
+                        session,
+                        window,
+                        target,
+                        name,
+                    };
+                    mode_set = true;
+                }
                 "kill-session" if !mode_set => {
                     let target = iter
                         .next()
@@ -430,6 +526,9 @@ Commands:
   new-pane         Create a pane in a window
   select-window    Select the active window in a session
   select-pane      Select the active pane in a window
+  rename-session   Rename a session
+  rename-window    Rename a window in a session
+  rename-pane      Rename a pane in a window
   kill-session     Delete a session by id or name
   kill-window      Delete a window by id or name within a session
   kill-pane        Delete a pane by id or name within a window
@@ -597,6 +696,21 @@ fn render_command_result(result: &CommandResult) -> String {
             pane,
         } => format!(
             "Selected pane {}:{} ({}) in session {}, window {}",
+            pane.index, pane.id, pane.name, session_id, window_id
+        ),
+        CommandResult::SessionRenamed { session } => {
+            format!("Renamed session {} to {}", session.id, session.name)
+        }
+        CommandResult::WindowRenamed { session_id, window } => format!(
+            "Renamed window {}:{} to {} in session {}",
+            window.index, window.id, window.name, session_id
+        ),
+        CommandResult::PaneRenamed {
+            session_id,
+            window_id,
+            pane,
+        } => format!(
+            "Renamed pane {}:{} to {} in session {}, window {}",
             pane.index, pane.id, pane.name, session_id, window_id
         ),
         CommandResult::SessionDeleted { session_id } => format!("Deleted session {}", session_id),

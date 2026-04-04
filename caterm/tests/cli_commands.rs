@@ -181,6 +181,56 @@ fn select_commands_update_active_targets() {
 }
 
 #[test]
+fn rename_commands_update_hierarchy_names() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+    assert!(
+        daemon
+            .run(&["new-window", "work", "editor"])
+            .status
+            .success()
+    );
+    assert!(
+        daemon
+            .run(&["new-pane", "work", "editor", "logs"])
+            .status
+            .success()
+    );
+
+    let rename_session = daemon.run(&["rename-session", "work", "client-work"]);
+    assert!(
+        rename_session.status.success(),
+        "{}",
+        stdout_text(&rename_session)
+    );
+    assert!(stdout_text(&rename_session).contains("Renamed session 1 to client-work"));
+
+    let rename_window = daemon.run(&["rename-window", "client-work", "editor", "shells"]);
+    assert!(
+        rename_window.status.success(),
+        "{}",
+        stdout_text(&rename_window)
+    );
+    assert!(stdout_text(&rename_window).contains("Renamed window 1:2 to shells in session 1"));
+
+    let rename_pane = daemon.run(&["rename-pane", "client-work", "shells", "logs", "tail"]);
+    assert!(
+        rename_pane.status.success(),
+        "{}",
+        stdout_text(&rename_pane)
+    );
+    assert!(stdout_text(&rename_pane).contains("Renamed pane 1:3 to tail in session 1, window 2"));
+
+    let list = daemon.run(&["list"]);
+    assert!(list.status.success(), "{}", stdout_text(&list));
+    let stdout = stdout_text(&list);
+    assert!(stdout.contains("session 1 (client-work)"), "{stdout}");
+    assert!(stdout.contains("window 1:2 (shells)"), "{stdout}");
+    assert!(stdout.contains("pane 1:3 (tail)"), "{stdout}");
+}
+
+#[test]
 fn send_input_acknowledges_delivery() {
     let daemon = TestDaemon::start();
 

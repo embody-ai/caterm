@@ -245,6 +245,36 @@ impl SessionManagerServer {
                     outcome.broadcast_events.splice(0..0, runtime_events);
                     outcome
                 }),
+            SessionRequest::RenameSession { target, name } => self
+                .rename_session(&target, &name)
+                .await
+                .map(|mut outcome| {
+                    outcome.broadcast_events.splice(0..0, runtime_events);
+                    outcome
+                }),
+            SessionRequest::RenameWindow {
+                session,
+                target,
+                name,
+            } => self
+                .rename_window(&session, &target, &name)
+                .await
+                .map(|mut outcome| {
+                    outcome.broadcast_events.splice(0..0, runtime_events);
+                    outcome
+                }),
+            SessionRequest::RenamePane {
+                session,
+                window,
+                target,
+                name,
+            } => self
+                .rename_pane(&session, &window, &target, &name)
+                .await
+                .map(|mut outcome| {
+                    outcome.broadcast_events.splice(0..0, runtime_events);
+                    outcome
+                }),
             SessionRequest::DeleteSession { target } => {
                 self.delete_session(&target).await.map(|mut outcome| {
                     outcome.broadcast_events.splice(0..0, runtime_events);
@@ -588,6 +618,126 @@ impl SessionManagerServer {
 
         Ok(CommandOutcome {
             result: CommandResult::PaneSelected {
+                session_id,
+                window_id,
+                pane: pane_snapshot,
+            },
+            broadcast_events: vec![ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            }],
+        })
+    }
+
+    async fn rename_session(&mut self, target: &str, name: &str) -> Result<CommandOutcome> {
+        let session_id = self.resolve_session_id(target)?;
+        if self
+            .sessions
+            .values()
+            .any(|session| session.id != session_id && session.name == name)
+        {
+            bail!("session name already exists: {name}");
+        }
+
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| anyhow!("session {session_id} not found"))?;
+        session.name = name.to_string();
+        let session_snapshot = session.snapshot();
+
+        Ok(CommandOutcome {
+            result: CommandResult::SessionRenamed {
+                session: session_snapshot,
+            },
+            broadcast_events: vec![ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            }],
+        })
+    }
+
+    async fn rename_window(
+        &mut self,
+        session_target: &str,
+        target: &str,
+        name: &str,
+    ) -> Result<CommandOutcome> {
+        let session_id = self.resolve_session_id(session_target)?;
+        let window_id = self.resolve_window_id(session_id, target)?;
+        {
+            let session = self
+                .sessions
+                .get(&session_id)
+                .ok_or_else(|| anyhow!("session {session_id} not found"))?;
+            if session
+                .windows
+                .values()
+                .any(|window| window.id != window_id && window.name == name)
+            {
+                bail!("window name already exists in session {session_id}: {name}");
+            }
+        }
+
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or_else(|| anyhow!("session {session_id} not found"))?;
+        let window = session
+            .windows
+            .get_mut(&window_id)
+            .ok_or_else(|| anyhow!("window {window_id} not found"))?;
+        window.name = name.to_string();
+        let window_snapshot = window.snapshot();
+
+        Ok(CommandOutcome {
+            result: CommandResult::WindowRenamed {
+                session_id,
+                window: window_snapshot,
+            },
+            broadcast_events: vec![ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            }],
+        })
+    }
+
+    async fn rename_pane(
+        &mut self,
+        session_target: &str,
+        window_target: &str,
+        target: &str,
+        name: &str,
+    ) -> Result<CommandOutcome> {
+        let session_id = self.resolve_session_id(session_target)?;
+        let window_id = self.resolve_window_id(session_id, window_target)?;
+        let pane_id = self.resolve_pane_id(session_id, window_id, target)?;
+        {
+            let window = self
+                .sessions
+                .get(&session_id)
+                .and_then(|session| session.windows.get(&window_id))
+                .ok_or_else(|| anyhow!("window {window_id} not found"))?;
+            if window
+                .panes
+                .values()
+                .any(|pane| pane.id != pane_id && pane.name == name)
+            {
+                bail!("pane name already exists in window {window_id}: {name}");
+            }
+        }
+
+        let window = self
+            .sessions
+            .get_mut(&session_id)
+            .and_then(|session| session.windows.get_mut(&window_id))
+            .ok_or_else(|| anyhow!("window {window_id} not found"))?;
+        let pane = window
+            .panes
+            .get_mut(&pane_id)
+            .ok_or_else(|| anyhow!("pane {pane_id} not found"))?;
+        pane.name = name.to_string();
+        let pane_snapshot = pane.snapshot();
+
+        Ok(CommandOutcome {
+            result: CommandResult::PaneRenamed {
                 session_id,
                 window_id,
                 pane: pane_snapshot,

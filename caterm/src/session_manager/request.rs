@@ -36,6 +36,21 @@ pub enum SessionRequest {
         window: String,
         target: String,
     },
+    RenameSession {
+        target: String,
+        name: String,
+    },
+    RenameWindow {
+        session: String,
+        target: String,
+        name: String,
+    },
+    RenamePane {
+        session: String,
+        window: String,
+        target: String,
+        name: String,
+    },
     DeleteSession {
         target: String,
     },
