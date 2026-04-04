@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use super::snapshot::SessionSnapshot;
 use super::window::Window;
 
 pub struct Session {
@@ -16,5 +17,18 @@ impl Session {
             .map(|window| window.index)
             .max()
             .map_or(0, |index| index + 1)
+    }
+
+    pub fn snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            id: self.id,
+            name: self.name.clone(),
+            active_window_id: self.active_window_id,
+            active_window_index: self
+                .active_window_id
+                .and_then(|id| self.windows.get(&id))
+                .map(|window| window.index),
+            windows: self.windows.values().map(Window::snapshot).collect(),
+        }
     }
 }

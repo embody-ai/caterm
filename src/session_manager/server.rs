@@ -5,14 +5,18 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::mpsc;
+use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 
 use crate::config::DaemonConfig;
 use crate::pty::PtySession;
 
+use super::event::ServerEvent;
 use super::pane::Pane;
-use super::request::{ClientOptions, SessionRequest, SessionResponse};
+use super::request::{ClientOptions, ServerResponse, SessionRequest};
 use super::session::Session;
+use super::snapshot::ServerSnapshot;
 use super::window::Window;
 
 pub struct SessionManagerServer {
@@ -98,10 +102,12 @@ impl SessionManagerServer {
             .with_context(|| "failed to decode session request")?;
         let should_stop = matches!(request, SessionRequest::Stop);
         let response = match self.handle_request(request).await {
-            Ok(message) => SessionResponse { ok: true, message },
-            Err(error) => SessionResponse {
+            Ok(events) => ServerResponse { ok: true, events },
+            Err(error) => ServerResponse {
                 ok: false,
-                message: error.to_string(),
+                events: vec![ServerEvent::Error {
+                    message: error.to_string(),
+                }],
             },
         };
 
@@ -113,33 +119,55 @@ impl SessionManagerServer {
         Ok(should_stop)
     }
 
-    async fn handle_request(&mut self, request: SessionRequest) -> Result<String> {
+    async fn handle_request(&mut self, request: SessionRequest) -> Result<Vec<ServerEvent>> {
+        let mut events = self.collect_runtime_events()?;
+
         match request {
-            SessionRequest::CreateSession { name } => self.create_session(name).await,
+            SessionRequest::CreateSession { name } => {
+                events.extend(self.create_session(name).await?)
+            }
             SessionRequest::CreateWindow { session, name } => {
-                self.create_window(&session, name).await
+                events.extend(self.create_window(&session, name).await?)
             }
             SessionRequest::CreatePane {
                 session,
                 window,
                 name,
-            } => self.create_pane(&session, &window, name).await,
-            SessionRequest::DeleteSession { target } => self.delete_session(&target).await,
+            } => events.extend(self.create_pane(&session, &window, name).await?),
+            SessionRequest::DeleteSession { target } => {
+                events.extend(self.delete_session(&target).await?)
+            }
             SessionRequest::DeleteWindow { session, target } => {
-                self.delete_window(&session, &target).await
+                events.extend(self.delete_window(&session, &target).await?)
             }
             SessionRequest::DeletePane {
                 session,
                 window,
                 target,
-            } => self.delete_pane(&session, &window, &target).await,
-            SessionRequest::List => Ok(self.list_sessions()),
-            SessionRequest::Stop => Ok("stopping Caterm server".to_string()),
-            SessionRequest::Ping => Ok("pong".to_string()),
+            } => events.extend(self.delete_pane(&session, &window, &target).await?),
+            SessionRequest::SendInput {
+                session,
+                window,
+                pane,
+                data,
+            } => events.extend(self.send_input(&session, &window, &pane, &data).await?),
+            SessionRequest::List => {
+                let snapshot = self.snapshot();
+                events.push(ServerEvent::SessionList {
+                    sessions: snapshot.sessions.clone(),
+                });
+                events.push(ServerEvent::Snapshot { snapshot });
+            }
+            SessionRequest::Stop => events.push(ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            }),
+            SessionRequest::Ping => events.push(ServerEvent::Pong),
         }
+
+        Ok(events)
     }
 
-    async fn create_session(&mut self, name: Option<String>) -> Result<String> {
+    async fn create_session(&mut self, name: Option<String>) -> Result<Vec<ServerEvent>> {
         let id = self.next_session_id;
         self.next_session_id += 1;
 
@@ -154,7 +182,7 @@ impl SessionManagerServer {
 
         let mut session = Session {
             id,
-            name: session_name.clone(),
+            name: session_name,
             windows: BTreeMap::new(),
             active_window_id: None,
         };
@@ -168,13 +196,11 @@ impl SessionManagerServer {
             .spawn_pane(format!("pane-{}", self.next_pane_id), 0)
             .await?;
         let pane_id = pane.id;
-        let pane_index = pane.index;
-        let pane_name = pane.name.clone();
 
         let mut window = Window {
             id: window_id,
             index: window_index,
-            name: window_name.clone(),
+            name: window_name,
             panes: BTreeMap::new(),
             active_pane_id: Some(pane_id),
         };
@@ -184,16 +210,39 @@ impl SessionManagerServer {
 
         self.sessions.insert(id, session);
 
-        Ok(format!(
-            "created session {id} ({session_name}) with window {window_index}:{window_id} ({window_name}) and pane {pane_index}:{pane_id} ({pane_name})"
-        ))
+        let session_snapshot = self
+            .sessions
+            .get(&id)
+            .expect("created session missing")
+            .snapshot();
+        let pane_snapshot = self
+            .sessions
+            .get(&id)
+            .and_then(|session| session.windows.get(&window_id))
+            .and_then(|window| window.panes.get(&pane_id))
+            .expect("created pane missing")
+            .snapshot();
+
+        Ok(vec![
+            ServerEvent::SessionCreated {
+                session: session_snapshot,
+            },
+            ServerEvent::PaneCreated {
+                session_id: id,
+                window_id,
+                pane: pane_snapshot,
+            },
+            ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            },
+        ])
     }
 
     async fn create_window(
         &mut self,
         session_target: &str,
         name: Option<String>,
-    ) -> Result<String> {
+    ) -> Result<Vec<ServerEvent>> {
         let session_id = self.resolve_session_id(session_target)?;
         let window_id = self.next_window_id;
         self.next_window_id += 1;
@@ -222,13 +271,11 @@ impl SessionManagerServer {
             .spawn_pane(format!("pane-{}", self.next_pane_id), 0)
             .await?;
         let pane_id = pane.id;
-        let pane_index = pane.index;
-        let pane_name = pane.name.clone();
 
         let mut window = Window {
             id: window_id,
             index: window_index,
-            name: window_name.clone(),
+            name: window_name,
             panes: BTreeMap::new(),
             active_pane_id: Some(pane_id),
         };
@@ -241,9 +288,34 @@ impl SessionManagerServer {
         session.windows.insert(window.id, window);
         session.active_window_id = Some(window_id);
 
-        Ok(format!(
-            "created window {window_index}:{window_id} ({window_name}) in session {session_id} with pane {pane_index}:{pane_id} ({pane_name})"
-        ))
+        let window_snapshot = self
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.windows.get(&window_id))
+            .expect("created window missing")
+            .snapshot();
+        let pane_snapshot = self
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.windows.get(&window_id))
+            .and_then(|window| window.panes.get(&pane_id))
+            .expect("created pane missing")
+            .snapshot();
+
+        Ok(vec![
+            ServerEvent::WindowCreated {
+                session_id,
+                window: window_snapshot,
+            },
+            ServerEvent::PaneCreated {
+                session_id,
+                window_id,
+                pane: pane_snapshot,
+            },
+            ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            },
+        ])
     }
 
     async fn create_pane(
@@ -251,7 +323,7 @@ impl SessionManagerServer {
         session_target: &str,
         window_target: &str,
         name: Option<String>,
-    ) -> Result<String> {
+    ) -> Result<Vec<ServerEvent>> {
         let session_id = self.resolve_session_id(session_target)?;
         let window_id = self.resolve_window_id(session_id, window_target)?;
         let pane_id = self.next_pane_id;
@@ -274,18 +346,33 @@ impl SessionManagerServer {
             }
         }
 
-        let pane = self.spawn_pane(pane_name.clone(), pane_index).await?;
+        let pane = self.spawn_pane(pane_name, pane_index).await?;
         let window = self
             .sessions
             .get_mut(&session_id)
             .and_then(|session| session.windows.get_mut(&window_id))
             .ok_or_else(|| anyhow!("window {window_id} not found"))?;
+        window.active_pane_id = Some(pane.id);
         window.panes.insert(pane.id, pane);
-        window.active_pane_id = Some(pane_id);
 
-        Ok(format!(
-            "created pane {pane_index}:{pane_id} ({pane_name}) in session {session_id}, window {window_id}"
-        ))
+        let pane_snapshot = self
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.windows.get(&window_id))
+            .and_then(|window| window.panes.get(&pane_id))
+            .expect("created pane missing")
+            .snapshot();
+
+        Ok(vec![
+            ServerEvent::PaneCreated {
+                session_id,
+                window_id,
+                pane: pane_snapshot,
+            },
+            ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            },
+        ])
     }
 
     async fn spawn_pane(&mut self, name: String, index: u32) -> Result<Pane> {
@@ -293,7 +380,8 @@ impl SessionManagerServer {
         self.next_pane_id += 1;
 
         let mut pty = PtySession::spawn(&self.config.shell, self.config.cols, self.config.rows)?;
-        pty.start_discard_output().await?;
+        let (output_tx, output_rx) = mpsc::unbounded_channel();
+        pty.start_output_pump(output_tx).await?;
 
         Ok(Pane {
             id,
@@ -301,10 +389,12 @@ impl SessionManagerServer {
             name,
             shell: self.config.shell.clone(),
             pty,
+            output_rx,
+            exit_code: None,
         })
     }
 
-    async fn delete_session(&mut self, target: &str) -> Result<String> {
+    async fn delete_session(&mut self, target: &str) -> Result<Vec<ServerEvent>> {
         let id = self.resolve_session_id(target)?;
         let session = self
             .sessions
@@ -313,10 +403,19 @@ impl SessionManagerServer {
 
         self.terminate_session(session).await;
 
-        Ok(format!("deleted session {id}"))
+        Ok(vec![
+            ServerEvent::SessionDeleted { session_id: id },
+            ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            },
+        ])
     }
 
-    async fn delete_window(&mut self, session_target: &str, target: &str) -> Result<String> {
+    async fn delete_window(
+        &mut self,
+        session_target: &str,
+        target: &str,
+    ) -> Result<Vec<ServerEvent>> {
         let session_id = self.resolve_session_id(session_target)?;
         let window_id = self.resolve_window_id(session_id, target)?;
         let session = self
@@ -334,9 +433,15 @@ impl SessionManagerServer {
 
         self.terminate_window(window).await;
 
-        Ok(format!(
-            "deleted window {window_id} from session {session_id}"
-        ))
+        Ok(vec![
+            ServerEvent::WindowDeleted {
+                session_id,
+                window_id,
+            },
+            ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            },
+        ])
     }
 
     async fn delete_pane(
@@ -344,7 +449,7 @@ impl SessionManagerServer {
         session_target: &str,
         window_target: &str,
         target: &str,
-    ) -> Result<String> {
+    ) -> Result<Vec<ServerEvent>> {
         let session_id = self.resolve_session_id(session_target)?;
         let window_id = self.resolve_window_id(session_id, window_target)?;
         let pane_id = self.resolve_pane_id(session_id, window_id, target)?;
@@ -365,9 +470,47 @@ impl SessionManagerServer {
         pane.pty.terminate().await?;
         let _ = pane.pty.wait().await;
 
-        Ok(format!(
-            "deleted pane {pane_id} from session {session_id}, window {window_id}"
-        ))
+        Ok(vec![
+            ServerEvent::PaneDeleted {
+                session_id,
+                window_id,
+                pane_id,
+            },
+            ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            },
+        ])
+    }
+
+    async fn send_input(
+        &mut self,
+        session_target: &str,
+        window_target: &str,
+        pane_target: &str,
+        data: &str,
+    ) -> Result<Vec<ServerEvent>> {
+        let session_id = self.resolve_session_id(session_target)?;
+        let window_id = self.resolve_window_id(session_id, window_target)?;
+        let pane_id = self.resolve_pane_id(session_id, window_id, pane_target)?;
+
+        let pane = self
+            .sessions
+            .get_mut(&session_id)
+            .and_then(|session| session.windows.get_mut(&window_id))
+            .and_then(|window| window.panes.get_mut(&pane_id))
+            .ok_or_else(|| anyhow!("pane {pane_id} not found"))?;
+        if pane.exit_code.is_some() {
+            bail!("pane {pane_id} has already exited");
+        }
+
+        pane.pty.write_all(data.as_bytes()).await?;
+        sleep(Duration::from_millis(50)).await;
+
+        let mut events = self.collect_runtime_events()?;
+        events.push(ServerEvent::Snapshot {
+            snapshot: self.snapshot(),
+        });
+        Ok(events)
     }
 
     fn resolve_session_id(&self, target: &str) -> Result<u64> {
@@ -423,49 +566,6 @@ impl SessionManagerServer {
             .ok_or_else(|| anyhow!("pane not found in window {window_id}: {target}"))
     }
 
-    fn list_sessions(&self) -> String {
-        if self.sessions.is_empty() {
-            return "no active sessions".to_string();
-        }
-
-        let mut lines = Vec::new();
-        lines.push("sessions:".to_string());
-
-        for session in self.sessions.values() {
-            lines.push(format!(
-                "session {} ({}) active_window={}",
-                session.id,
-                session.name,
-                session
-                    .active_window_id
-                    .and_then(|id| session.windows.get(&id))
-                    .map(|window| window.index.to_string())
-                    .unwrap_or_else(|| "-".to_string())
-            ));
-            for window in session.windows.values() {
-                lines.push(format!(
-                    "  window {}:{} ({}) active_pane={}",
-                    window.index,
-                    window.id,
-                    window.name,
-                    window
-                        .active_pane_id
-                        .and_then(|id| window.panes.get(&id))
-                        .map(|pane| pane.index.to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                ));
-                for pane in window.panes.values() {
-                    lines.push(format!(
-                        "    pane {}:{} ({}) shell={}",
-                        pane.index, pane.id, pane.name, pane.shell
-                    ));
-                }
-            }
-        }
-
-        lines.join("\n")
-    }
-
     async fn shutdown_all(&mut self) -> Result<()> {
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
 
@@ -488,12 +588,53 @@ impl SessionManagerServer {
             let _ = pane.pty.wait().await;
         }
     }
+
+    fn snapshot(&self) -> ServerSnapshot {
+        ServerSnapshot {
+            sessions: self.sessions.values().map(Session::snapshot).collect(),
+        }
+    }
+
+    fn collect_runtime_events(&mut self) -> Result<Vec<ServerEvent>> {
+        let mut events = Vec::new();
+
+        for (session_id, session) in &mut self.sessions {
+            for (window_id, window) in &mut session.windows {
+                for (pane_id, pane) in &mut window.panes {
+                    while let Ok(chunk) = pane.output_rx.try_recv() {
+                        if !chunk.is_empty() {
+                            events.push(ServerEvent::PtyOutput {
+                                session_id: *session_id,
+                                window_id: *window_id,
+                                pane_id: *pane_id,
+                                data: String::from_utf8_lossy(&chunk).into_owned(),
+                            });
+                        }
+                    }
+
+                    if pane.exit_code.is_none() {
+                        if let Some(exit_code) = pane.pty.try_wait()? {
+                            pane.exit_code = Some(exit_code);
+                            events.push(ServerEvent::PaneExited {
+                                session_id: *session_id,
+                                window_id: *window_id,
+                                pane_id: *pane_id,
+                                exit_code,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(events)
+    }
 }
 
 pub async fn send_client_request(
     options: &ClientOptions,
     request: SessionRequest,
-) -> Result<SessionResponse> {
+) -> Result<ServerResponse> {
     let stream = UnixStream::connect(&options.socket_path)
         .await
         .with_context(|| {
@@ -514,7 +655,7 @@ pub async fn send_client_request(
         .next_line()
         .await?
         .context("server closed connection without responding")?;
-    let response = serde_json::from_str::<SessionResponse>(&response_line)?;
+    let response = serde_json::from_str::<ServerResponse>(&response_line)?;
 
     Ok(response)
 }
@@ -551,7 +692,7 @@ async fn print_server_banner(socket_path: &Path) -> Result<()> {
     stdout
         .write_all(
             format!(
-                "Starting Caterm server.\nSocket: {}\nUse `caterm new-session`, `caterm new-window`, `caterm new-pane`, and related commands to manage the hierarchy.\n",
+                "Starting Caterm server.\nSocket: {}\nUse `caterm new-session`, `caterm new-window`, `caterm new-pane`, `caterm send-input`, and related commands to manage the hierarchy.\n",
                 socket_path.display()
             )
             .as_bytes(),

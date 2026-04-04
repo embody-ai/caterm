@@ -10,8 +10,8 @@ use tracing::info;
 
 use crate::config::DaemonConfig;
 use crate::session_manager::{
-    ClientOptions, SessionManagerServer, SessionRequest, default_socket_path, is_server_running,
-    send_client_request,
+    ClientOptions, ServerEvent, SessionManagerServer, SessionRequest, default_socket_path,
+    is_server_running, send_client_request,
 };
 
 #[tokio::main]
@@ -111,6 +111,23 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Mode::SendInput {
+            session,
+            window,
+            pane,
+            data,
+        } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::SendInput {
+                    session,
+                    window,
+                    pane,
+                    data,
+                },
+            )
+            .await
+        }
         Mode::List => run_client_command(&client_options, SessionRequest::List).await,
         Mode::Stop => run_client_command(&client_options, SessionRequest::Stop).await,
         Mode::Help => Ok(()),
@@ -160,6 +177,12 @@ enum Mode {
         session: String,
         window: String,
         target: String,
+    },
+    SendInput {
+        session: String,
+        window: String,
+        pane: String,
+        data: String,
     },
     List,
     Stop,
@@ -254,6 +277,28 @@ impl Command {
                     };
                     mode_set = true;
                 }
+                "send-input" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("send-input requires a session id or name")?;
+                    let window = iter
+                        .next()
+                        .context("send-input requires a window id or name")?;
+                    let pane = iter
+                        .next()
+                        .context("send-input requires a pane id or name")?;
+                    let rest: Vec<String> = iter.by_ref().collect();
+                    if rest.is_empty() {
+                        bail!("send-input requires input data");
+                    }
+                    command.mode = Mode::SendInput {
+                        session,
+                        window,
+                        pane,
+                        data: rest.join(" "),
+                    };
+                    mode_set = true;
+                }
                 "list" if !mode_set => {
                     command.mode = Mode::List;
                     mode_set = true;
@@ -294,6 +339,7 @@ Commands:
   kill-session     Delete a session by id or name
   kill-window      Delete a window by id or name within a session
   kill-pane        Delete a pane by id or name within a window
+  send-input       Send input bytes to a pane PTY
   list             List the session/window/pane hierarchy
   stop             Stop the local Caterm server
 
@@ -313,14 +359,23 @@ Environment:
 async fn run_client_command(options: &ClientOptions, request: SessionRequest) -> Result<()> {
     let response = send_client_request(options, request).await?;
     let mut stdout = io::stdout();
+    let payload = serde_json::to_string_pretty(&response)?;
 
-    stdout.write_all(response.message.as_bytes()).await?;
+    stdout.write_all(payload.as_bytes()).await?;
     stdout.write_all(b"\n").await?;
     stdout.flush().await?;
 
     if response.ok {
         Ok(())
     } else {
-        bail!("{}", response.message)
+        let message = response
+            .events
+            .into_iter()
+            .find_map(|event| match event {
+                ServerEvent::Error { message } => Some(message),
+                _ => None,
+            })
+            .unwrap_or_else(|| "request failed".to_string());
+        bail!("{message}")
     }
 }

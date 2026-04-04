@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::pane::Pane;
+use super::snapshot::WindowSnapshot;
 
 pub struct Window {
     pub id: u64,
@@ -21,5 +22,19 @@ impl Window {
             .map(|pane| pane.index)
             .max()
             .map_or(0, |index| index + 1)
+    }
+
+    pub fn snapshot(&self) -> WindowSnapshot {
+        WindowSnapshot {
+            id: self.id,
+            index: self.index,
+            name: self.name.clone(),
+            active_pane_id: self.active_pane_id,
+            active_pane_index: self
+                .active_pane_id
+                .and_then(|id| self.panes.get(&id))
+                .map(|pane| pane.index),
+            panes: self.panes.values().map(Pane::snapshot).collect(),
+        }
     }
 }

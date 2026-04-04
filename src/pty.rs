@@ -1,14 +1,15 @@
 use std::io::{Read, Write};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
+use tokio::sync::mpsc;
 use tokio::task;
 
 pub struct PtySession {
     reader: Option<Box<dyn Read + Send>>,
     child: Option<Box<dyn Child + Send + Sync>>,
-    _writer: Arc<Box<dyn Write + Send>>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
 }
 
 impl PtySession {
@@ -38,13 +39,13 @@ impl PtySession {
             .context("failed to take PTY writer")?;
 
         Ok(Self {
-            _writer: Arc::new(writer),
+            writer: Arc::new(Mutex::new(writer)),
             reader: Some(reader),
             child: Some(child),
         })
     }
 
-    pub async fn start_discard_output(&mut self) -> Result<()> {
+    pub async fn start_output_pump(&mut self, tx: mpsc::UnboundedSender<Vec<u8>>) -> Result<()> {
         let mut reader = self
             .reader
             .take()
@@ -56,11 +57,32 @@ impl PtySession {
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
-                    Ok(_) => {}
+                    Ok(n) => {
+                        if tx.send(buffer[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
                     Err(_) => break,
                 }
             }
         });
+
+        Ok(())
+    }
+
+    pub async fn write_all(&self, bytes: &[u8]) -> Result<()> {
+        let writer = Arc::clone(&self.writer);
+        let payload = bytes.to_vec();
+
+        task::spawn_blocking(move || -> Result<()> {
+            let mut guard = writer.lock().expect("PTY writer mutex poisoned");
+            guard
+                .write_all(&payload)
+                .context("failed to write to PTY")?;
+            guard.flush().context("failed to flush PTY writer")?;
+            Ok(())
+        })
+        .await??;
 
         Ok(())
     }
@@ -72,6 +94,12 @@ impl PtySession {
             .context("failed to wait for shell")?;
 
         Ok(status.exit_code())
+    }
+
+    pub fn try_wait(&mut self) -> Result<Option<u32>> {
+        let child = self.child.as_mut().context("PTY child not available")?;
+        let status = child.try_wait().context("failed to query PTY child")?;
+        Ok(status.map(|status| status.exit_code()))
     }
 
     pub async fn terminate(&mut self) -> Result<()> {
