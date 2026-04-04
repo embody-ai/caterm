@@ -11,7 +11,7 @@ It is built around a simple but powerful idea:
 
 Caterm consists of three main components:
 
-1. **CLI Agent (Rust)** – runs on macOS and Linux, manages PTY and shell
+1. **`caterm-server` package (Rust)** – runs on macOS and Linux, manages PTY and shell
 2. **Web Server** – handles authentication and real-time communication
 3. **Clients** – web, mobile, or native apps for interacting with terminals
 
@@ -120,10 +120,10 @@ Caterm includes a native macOS application built with SwiftUI.
 
 ---
 
-## 📦 Installation (CLI Agent)
+## 📦 Installation (`caterm-server`)
 
 ```bash
-curl -sSL https://your-domain/install.sh | bash
+cargo build -p caterm-server
 ```
 
 ---
@@ -148,7 +148,7 @@ curl -sSL https://your-domain/install.sh | bash
 
 ## 🛠 Tech Stack
 
-* **Rust** – CLI agent
+* **Rust** – `caterm-server`
 * **WebSocket** – real-time communication
 * **Swift / SwiftUI** – macOS app
 * **Web (xterm.js)** – browser client
