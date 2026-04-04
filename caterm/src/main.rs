@@ -833,10 +833,11 @@ fn render_snapshot(snapshot: &ServerSnapshot) -> String {
         ));
         for window in &session.windows {
             lines.push(format!(
-                "  window {}:{} ({}) active_pane={}",
+                "  window {}:{} ({}) layout={} active_pane={}",
                 window.index,
                 window.id,
                 window.name,
+                window.layout,
                 window
                     .active_pane_index
                     .map(|index| index.to_string())

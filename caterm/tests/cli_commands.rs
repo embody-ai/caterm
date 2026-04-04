@@ -128,7 +128,7 @@ fn new_window_and_new_pane_are_visible_in_list() {
     let list = daemon.run(&["list"]);
     assert!(list.status.success(), "{}", stdout_text(&list));
     let list_stdout = stdout_text(&list);
-    assert!(list_stdout.contains("window 1:2 (editor)"));
+    assert!(list_stdout.contains("window 1:2 (editor) layout=tiled"));
     assert!(list_stdout.contains("pane 0:2 (pane-2)"));
     assert!(list_stdout.contains("pane 1:3 (logs)"));
 }
@@ -175,9 +175,31 @@ fn select_commands_update_active_targets() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("window 1:2 (editor) active_pane=1"),
+        stdout.contains("window 1:2 (editor) layout=tiled active_pane=1"),
         "{stdout}"
     );
+}
+
+#[test]
+fn list_shows_single_and_tiled_layout_state() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+
+    let initial = daemon.run(&["list"]);
+    assert!(initial.status.success(), "{}", stdout_text(&initial));
+    assert!(stdout_text(&initial).contains("window 0:1 (window-0) layout=single"));
+
+    assert!(
+        daemon
+            .run(&["new-pane", "work", "0", "logs"])
+            .status
+            .success()
+    );
+
+    let updated = daemon.run(&["list"]);
+    assert!(updated.status.success(), "{}", stdout_text(&updated));
+    assert!(stdout_text(&updated).contains("window 0:1 (window-0) layout=tiled"));
 }
 
 #[test]

@@ -19,7 +19,7 @@ use super::pane::Pane;
 use super::request::{ClientOptions, SessionRequest};
 use super::session::Session;
 use super::snapshot::ServerSnapshot;
-use super::window::Window;
+use super::window::{Window, WindowLayout};
 
 pub(crate) type RequestTx = mpsc::UnboundedSender<RequestEnvelope>;
 
@@ -362,6 +362,7 @@ impl SessionManagerServer {
             id: window_id,
             index: window_index,
             name: window_name,
+            layout: WindowLayout::Single,
             panes: BTreeMap::new(),
             active_pane_id: Some(pane_id),
         };
@@ -450,6 +451,7 @@ impl SessionManagerServer {
             id: window_id,
             index: window_index,
             name: window_name,
+            layout: WindowLayout::Single,
             panes: BTreeMap::new(),
             active_pane_id: Some(pane_id),
         };
@@ -535,6 +537,7 @@ impl SessionManagerServer {
             .ok_or_else(|| anyhow!("window {window_id} not found"))?;
         window.active_pane_id = Some(pane.id);
         window.panes.insert(pane.id, pane);
+        window.sync_layout();
 
         let pane_snapshot = self
             .sessions
@@ -575,6 +578,9 @@ impl SessionManagerServer {
             .get_mut(&session_id)
             .ok_or_else(|| anyhow!("session {session_id} not found"))?;
         session.active_window_id = Some(window_id);
+        if let Some(window) = session.windows.get_mut(&window_id) {
+            window.sync_layout();
+        }
 
         let window_snapshot = session
             .windows
@@ -608,6 +614,7 @@ impl SessionManagerServer {
             .get_mut(&session_id)
             .and_then(|session| session.windows.get_mut(&window_id))
             .ok_or_else(|| anyhow!("window {window_id} not found"))?;
+        window.sync_layout();
         window.active_pane_id = Some(pane_id);
 
         let pane_snapshot = window
@@ -884,6 +891,7 @@ impl SessionManagerServer {
             .panes
             .remove(&pane_id)
             .ok_or_else(|| anyhow!("pane {pane_id} not found"))?;
+        window.sync_layout();
         if window.active_pane_id == Some(pane_id) {
             window.active_pane_id = window.panes.keys().next().copied();
         }
@@ -1436,6 +1444,7 @@ mod tests {
                             id: 10,
                             index: 0,
                             name: "empty".to_string(),
+                            layout: WindowLayout::Single,
                             panes: BTreeMap::new(),
                             active_pane_id: None,
                         },
@@ -1446,6 +1455,7 @@ mod tests {
                             id: 11,
                             index: 1,
                             name: "kept".to_string(),
+                            layout: WindowLayout::Single,
                             panes: BTreeMap::from([(
                                 20,
                                 Pane {
@@ -1477,6 +1487,7 @@ mod tests {
                         id: 12,
                         index: 0,
                         name: "empty".to_string(),
+                        layout: WindowLayout::Single,
                         panes: BTreeMap::new(),
                         active_pane_id: None,
                     },

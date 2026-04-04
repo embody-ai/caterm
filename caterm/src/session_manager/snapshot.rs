@@ -22,6 +22,7 @@ pub struct WindowSnapshot {
     pub id: u64,
     pub index: u32,
     pub name: String,
+    pub layout: String,
     pub active_pane_id: Option<u64>,
     pub active_pane_index: Option<u32>,
     pub panes: Vec<PaneSnapshot>,
