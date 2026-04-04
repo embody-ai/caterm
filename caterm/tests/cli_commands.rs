@@ -647,6 +647,53 @@ fn daemon_writes_logs_to_configured_file() {
 }
 
 #[test]
+fn start_daemonize_launches_background_server() {
+    let tempdir = TempDir::new().expect("create tempdir");
+    let socket_path = tempdir.path().join("caterm.sock");
+
+    let start = Command::new(bin_path())
+        .arg("start")
+        .arg("--daemonize")
+        .arg("--socket")
+        .arg(&socket_path)
+        .output()
+        .expect("run daemonize start");
+    assert!(start.status.success(), "{}", stdout_text(&start));
+    assert!(stdout_text(&start).contains("Started Caterm daemon in background"));
+
+    wait_for_socket(&socket_path);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let status = Command::new(bin_path())
+            .arg("--socket")
+            .arg(&socket_path)
+            .arg("status")
+            .output()
+            .expect("run status");
+        assert!(status.status.success(), "{}", stdout_text(&status));
+        if stdout_text(&status).contains("Caterm daemon is running") {
+            break;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "background daemon did not become healthy:\n{}",
+                stdout_text(&status)
+            );
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let stop = Command::new(bin_path())
+        .arg("--socket")
+        .arg(&socket_path)
+        .arg("stop")
+        .output()
+        .expect("stop background daemon");
+    assert!(stop.status.success(), "{}", stdout_text(&stop));
+}
+
+#[test]
 fn attach_streams_live_events() {
     let daemon = TestDaemon::start();
 

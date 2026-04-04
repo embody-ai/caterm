@@ -5,6 +5,7 @@ mod session_manager;
 
 use std::env;
 use std::fs::OpenOptions;
+use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::{self, AsyncWriteExt};
@@ -36,6 +37,8 @@ async fn main() -> Result<()> {
     let config = DaemonConfig::from_env();
     let _tracing_guard = init_tracing(&config)?;
     let shell = config.shell.clone();
+    let explicit_foreground = command.foreground;
+    let daemonize = command.daemonize;
     let client_options = ClientOptions {
         socket_path: command
             .socket_path
@@ -45,6 +48,9 @@ async fn main() -> Result<()> {
 
     match command.mode {
         Mode::Start => {
+            if daemonize && !explicit_foreground {
+                return run_daemonized_start(&client_options);
+            }
             if is_server_running(&client_options.socket_path).await {
                 bail!(
                     "Caterm server is already running at {}",
@@ -275,6 +281,8 @@ struct Command {
     mode: Mode,
     socket_path: Option<std::path::PathBuf>,
     version: bool,
+    foreground: bool,
+    daemonize: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -371,6 +379,8 @@ impl Command {
             mode: Mode::Start,
             socket_path: None,
             version: false,
+            foreground: false,
+            daemonize: false,
         };
         let mut mode_set = false;
         let mut iter = args.into_iter().skip(1);
@@ -383,6 +393,8 @@ impl Command {
                     let value = iter.next().context("--socket requires a path")?;
                     command.socket_path = Some(value.into());
                 }
+                "--foreground" => command.foreground = true,
+                "--daemonize" => command.daemonize = true,
                 "start" if !mode_set => {
                     command.mode = Mode::Start;
                     mode_set = true;
@@ -623,6 +635,10 @@ impl Command {
             }
         }
 
+        if command.foreground && command.daemonize {
+            bail!("--foreground and --daemonize cannot be used together");
+        }
+
         Ok(command)
     }
 }
@@ -669,6 +685,8 @@ Options:
   -h, --help       Print help
   -V, --version    Print version
   --socket <path>  Override the Unix socket path for the local server
+  --foreground     Run `start` in the foreground explicitly
+  --daemonize      Run `start` as a detached background process
 
 Environment:
   CATERM_SHELL     Override the shell used for the PTY session
@@ -749,6 +767,29 @@ async fn run_status_command(options: &ClientOptions) -> Result<()> {
     stdout.write_all(b"\n").await?;
     stdout.flush().await?;
 
+    Ok(())
+}
+
+fn run_daemonized_start(options: &ClientOptions) -> Result<()> {
+    let current_exe = env::current_exe().context("failed to locate current executable")?;
+    let mut child = std::process::Command::new(current_exe);
+    child
+        .arg("start")
+        .arg("--foreground")
+        .arg("--socket")
+        .arg(&options.socket_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    let child = child
+        .spawn()
+        .context("failed to launch background daemon")?;
+    println!(
+        "Started Caterm daemon in background on {} (pid {})",
+        options.socket_path.display(),
+        child.id()
+    );
     Ok(())
 }
 
