@@ -35,7 +35,7 @@
 
 ## Testing
 
-- [ ] Add concurrent client integration tests
+- [x] Add concurrent client integration tests
 - [ ] Add stale socket and daemon restart tests
 - [ ] Add protocol-level event stream tests once attach exists
 - [ ] Add more invalid-target and error-path coverage

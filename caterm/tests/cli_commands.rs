@@ -694,6 +694,50 @@ fn start_daemonize_launches_background_server() {
 }
 
 #[test]
+fn concurrent_clients_can_create_and_list_without_conflicts() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+    let socket_path = daemon.socket_path.clone();
+
+    let thread_one = thread::spawn({
+        let socket_path = socket_path.clone();
+        move || {
+            Command::new(bin_path())
+                .arg("--socket")
+                .arg(&socket_path)
+                .args(["new-window", "work", "editor"])
+                .output()
+                .expect("run concurrent new-window")
+        }
+    });
+
+    let thread_two = thread::spawn({
+        let socket_path = socket_path.clone();
+        move || {
+            Command::new(bin_path())
+                .arg("--socket")
+                .arg(&socket_path)
+                .args(["list"])
+                .output()
+                .expect("run concurrent list")
+        }
+    });
+
+    let create = thread_one.join().expect("join new-window thread");
+    let list = thread_two.join().expect("join list thread");
+
+    assert!(create.status.success(), "{}", stdout_text(&create));
+    assert!(list.status.success(), "{}", stdout_text(&list));
+
+    let final_list = daemon.run(&["list"]);
+    assert!(final_list.status.success(), "{}", stdout_text(&final_list));
+    let stdout = stdout_text(&final_list);
+    assert!(stdout.contains("session 1 (work)"), "{stdout}");
+    assert!(stdout.contains("window 1:2 (editor)"), "{stdout}");
+}
+
+#[test]
 fn attach_streams_live_events() {
     let daemon = TestDaemon::start();
 
