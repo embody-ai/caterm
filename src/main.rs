@@ -67,11 +67,55 @@ async fn main() -> Result<()> {
             let mut agent = Agent::new(config)?;
             agent.run().await
         }
-        Mode::Create { name } => {
-            run_client_command(&client_options, SessionRequest::Create { name }).await
+        Mode::NewSession { name } => {
+            run_client_command(&client_options, SessionRequest::CreateSession { name }).await
         }
-        Mode::Delete { target } => {
-            run_client_command(&client_options, SessionRequest::Delete { target }).await
+        Mode::NewWindow { session, name } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::CreateWindow { session, name },
+            )
+            .await
+        }
+        Mode::NewPane {
+            session,
+            window,
+            name,
+        } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::CreatePane {
+                    session,
+                    window,
+                    name,
+                },
+            )
+            .await
+        }
+        Mode::KillSession { target } => {
+            run_client_command(&client_options, SessionRequest::DeleteSession { target }).await
+        }
+        Mode::KillWindow { session, target } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::DeleteWindow { session, target },
+            )
+            .await
+        }
+        Mode::KillPane {
+            session,
+            window,
+            target,
+        } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::DeletePane {
+                    session,
+                    window,
+                    target,
+                },
+            )
+            .await
         }
         Mode::List => run_client_command(&client_options, SessionRequest::List).await,
         Mode::Stop => run_client_command(&client_options, SessionRequest::Stop).await,
@@ -100,10 +144,28 @@ struct Command {
 enum Mode {
     Start,
     Agent,
-    Create {
+    NewSession {
         name: Option<String>,
     },
-    Delete {
+    NewWindow {
+        session: String,
+        name: Option<String>,
+    },
+    NewPane {
+        session: String,
+        window: String,
+        name: Option<String>,
+    },
+    KillSession {
+        target: String,
+    },
+    KillWindow {
+        session: String,
+        target: String,
+    },
+    KillPane {
+        session: String,
+        window: String,
         target: String,
     },
     List,
@@ -141,16 +203,66 @@ impl Command {
                     command.mode = Mode::Agent;
                     mode_set = true;
                 }
-                "create" if !mode_set => {
+                "new-session" if !mode_set => {
                     let name = iter.next();
-                    command.mode = Mode::Create { name };
+                    command.mode = Mode::NewSession { name };
                     mode_set = true;
                 }
-                "delete" if !mode_set => {
+                "new-window" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("new-window requires a session id or name")?;
+                    let name = iter.next();
+                    command.mode = Mode::NewWindow { session, name };
+                    mode_set = true;
+                }
+                "new-pane" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("new-pane requires a session id or name")?;
+                    let window = iter
+                        .next()
+                        .context("new-pane requires a window id or name")?;
+                    let name = iter.next();
+                    command.mode = Mode::NewPane {
+                        session,
+                        window,
+                        name,
+                    };
+                    mode_set = true;
+                }
+                "kill-session" if !mode_set => {
                     let target = iter
                         .next()
-                        .context("delete requires a session id or name")?;
-                    command.mode = Mode::Delete { target };
+                        .context("kill-session requires a session id or name")?;
+                    command.mode = Mode::KillSession { target };
+                    mode_set = true;
+                }
+                "kill-window" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("kill-window requires a session id or name")?;
+                    let target = iter
+                        .next()
+                        .context("kill-window requires a window id or name")?;
+                    command.mode = Mode::KillWindow { session, target };
+                    mode_set = true;
+                }
+                "kill-pane" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("kill-pane requires a session id or name")?;
+                    let window = iter
+                        .next()
+                        .context("kill-pane requires a window id or name")?;
+                    let target = iter
+                        .next()
+                        .context("kill-pane requires a pane id or name")?;
+                    command.mode = Mode::KillPane {
+                        session,
+                        window,
+                        target,
+                    };
                     mode_set = true;
                 }
                 "list" if !mode_set => {
@@ -187,9 +299,13 @@ Usage:
 
 Commands:
   start            Start the local Caterm server (default)
-  create [name]    Create a session via the local server
-  delete <target>  Delete a session by id or name
-  list             List sessions managed by the local server
+  new-session      Create a session with an initial window and pane
+  new-window       Create a window in a session
+  new-pane         Create a pane in a window
+  kill-session     Delete a session by id or name
+  kill-window      Delete a window by id or name within a session
+  kill-pane        Delete a pane by id or name within a window
+  list             List the session/window/pane hierarchy
   stop             Stop the local Caterm server
   agent            Run the JSON PTY agent mode
 
