@@ -28,6 +28,56 @@
 		};
 /* End PBXFrameworksBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		A17250812F81048100D5E883 /* Build Ghostty Runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../Makefile",
+				"$(SRCROOT)/../ThirdParty/ghostty/.git",
+			);
+			name = "Build Ghostty Runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/../build/ghostty/Frameworks/macos/GhosttyKit.framework/GhosttyKit",
+				"$(SRCROOT)/../build/ghostty/Resources/ghostty",
+				"$(SRCROOT)/../build/ghostty/Resources/terminfo",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "if [[ \"${PLATFORM_NAME}\" != \"macosx\" ]]; then\n  exit 0\nfi\n\nmake -C \"${SRCROOT}/..\" build-ghostty-xcframework\n";
+		};
+		A17250822F81048100D5E883 /* Embed Ghostty Runtime */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../build/ghostty/Frameworks/macos/GhosttyKit.framework/GhosttyKit",
+				"$(SRCROOT)/../build/ghostty/Resources/ghostty",
+				"$(SRCROOT)/../build/ghostty/Resources/terminfo",
+			);
+			name = "Embed Ghostty Runtime";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/GhosttyKit.framework/GhosttyKit",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ghostty",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/terminfo",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "if [[ \"${PLATFORM_NAME}\" != \"macosx\" ]]; then\n  exit 0\nfi\n\nframework_src=\"${SRCROOT}/../build/ghostty/Frameworks/macos/GhosttyKit.framework\"\nresources_src=\"${SRCROOT}/../build/ghostty/Resources/ghostty\"\nterminfo_src=\"${SRCROOT}/../build/ghostty/Resources/terminfo\"\nframework_dst=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nresources_dst=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n\nif [[ ! -d \"$framework_src\" ]]; then\n  echo \"error: missing Ghostty framework at $framework_src\"\n  exit 1\nfi\n\nmkdir -p \"$framework_dst\" \"$resources_dst\"\nrsync -a --delete \"$framework_src/\" \"$framework_dst/GhosttyKit.framework/\"\nrsync -a --delete \"$resources_src/\" \"$resources_dst/ghostty/\"\nrsync -a --delete \"$terminfo_src/\" \"$resources_dst/terminfo/\"\n\nif [[ \"${CODE_SIGNING_ALLOWED:-NO}\" == \"YES\" && -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]]; then\n  /usr/bin/codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --timestamp=none --preserve-metadata=identifier,entitlements,flags \"$framework_dst/GhosttyKit.framework\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXGroup section */
 		0725088A2F81048100D5E883 = {
 			isa = PBXGroup;
@@ -52,9 +102,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0725089E2F81048200D5E883 /* Build configuration list for PBXNativeTarget "Caterm" */;
 			buildPhases = (
+				A17250812F81048100D5E883 /* Build Ghostty Runtime */,
 				0725088F2F81048100D5E883 /* Sources */,
 				072508902F81048100D5E883 /* Frameworks */,
 				072508912F81048100D5E883 /* Resources */,
+				A17250822F81048100D5E883 /* Embed Ghostty Runtime */,
 			);
 			buildRules = (
 			);
@@ -252,7 +304,12 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"FRAMEWORK_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../build/ghostty/Frameworks/macos",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Caterm;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
@@ -271,6 +328,11 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"$(inherited)",
+					"-framework",
+					GhosttyKit,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = embodyai.co.jp.Caterm;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -299,7 +361,12 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"FRAMEWORK_SEARCH_PATHS[sdk=macosx*]" = (
+					"$(inherited)",
+					"$(SRCROOT)/../build/ghostty/Frameworks/macos",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Caterm;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
@@ -318,6 +385,11 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"$(inherited)",
+					"-framework",
+					GhosttyKit,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = embodyai.co.jp.Caterm;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
