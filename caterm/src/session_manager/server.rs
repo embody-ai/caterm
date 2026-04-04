@@ -14,8 +14,9 @@ use crate::config::DaemonConfig;
 use crate::pty::PtySession;
 
 use super::command::{CommandResponse, CommandResult};
-use super::event::ServerEvent;
+use super::event::{EventEnvelope, ServerEvent};
 use super::pane::Pane;
+use super::protocol::PROTOCOL_VERSION;
 use super::request::{ClientOptions, SessionRequest};
 use super::session::Session;
 use super::snapshot::ServerSnapshot;
@@ -133,17 +134,9 @@ impl SessionManagerServer {
                             let response = match self.handle_request(request).await {
                                 Ok(outcome) => {
                                     self.broadcast_events(&outcome.broadcast_events);
-                                    CommandResponse {
-                                        ok: true,
-                                        result: Some(outcome.result),
-                                        error: None,
-                                    }
+                                    CommandResponse::success(outcome.result)
                                 }
-                                Err(error) => CommandResponse {
-                                    ok: false,
-                                    result: None,
-                                    error: Some(error.to_string()),
-                                },
+                                Err(error) => CommandResponse::failure(error.to_string()),
                             };
 
                             let _ = response_tx.send(response);
@@ -1665,7 +1658,8 @@ async fn handle_local_connection(stream: UnixStream, request_tx: RequestTx) -> R
         } = match attached {
             Ok(client) => client,
             Err(message) => {
-                let payload = serde_json::to_string(&ServerEvent::Error { message })?;
+                let payload =
+                    serde_json::to_string(&EventEnvelope::new(ServerEvent::Error { message }))?;
                 writer.write_all(payload.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
                 writer.flush().await?;
@@ -1674,7 +1668,7 @@ async fn handle_local_connection(stream: UnixStream, request_tx: RequestTx) -> R
         };
 
         while let Some(event) = events_rx.recv().await {
-            let payload = serde_json::to_string(&event)?;
+            let payload = serde_json::to_string(&EventEnvelope::new(event))?;
             if writer.write_all(payload.as_bytes()).await.is_err() {
                 break;
             }
@@ -1739,6 +1733,13 @@ pub async fn send_client_request(
         .await?
         .context("server closed connection without responding")?;
     let response = serde_json::from_str::<CommandResponse>(&response_line)?;
+    if response.protocol_version != PROTOCOL_VERSION {
+        bail!(
+            "protocol version mismatch: daemon={} client={}",
+            response.protocol_version,
+            PROTOCOL_VERSION
+        );
+    }
 
     Ok(response)
 }

@@ -1,12 +1,34 @@
 use serde::{Deserialize, Serialize};
 
+use super::protocol::PROTOCOL_VERSION;
 use super::snapshot::{PaneSnapshot, ServerSnapshot, SessionSnapshot, WindowSnapshot};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandResponse {
+    pub protocol_version: u32,
     pub ok: bool,
     pub result: Option<CommandResult>,
     pub error: Option<String>,
+}
+
+impl CommandResponse {
+    pub fn success(result: CommandResult) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            ok: true,
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    pub fn failure(error: String) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            ok: false,
+            result: None,
+            error: Some(error),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

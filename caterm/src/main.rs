@@ -11,9 +11,9 @@ use tracing::info;
 
 use crate::config::DaemonConfig;
 use crate::session_manager::{
-    ClientOptions, CommandResponse, CommandResult, ServerEvent, ServerSnapshot,
-    SessionManagerServer, SessionRequest, attach_client_stream, default_socket_path,
-    is_server_running, send_client_request,
+    ClientOptions, CommandResponse, CommandResult, EventEnvelope, PROTOCOL_VERSION, ServerEvent,
+    ServerSnapshot, SessionManagerServer, SessionRequest, attach_client_stream,
+    default_socket_path, is_server_running, send_client_request,
 };
 
 #[tokio::main]
@@ -737,9 +737,17 @@ async fn run_attach_command(
     let mut saw_event = false;
 
     while let Some(line) = lines.next_line().await? {
-        let event: ServerEvent = serde_json::from_str(&line)?;
+        let envelope: EventEnvelope = serde_json::from_str(&line)?;
+        if envelope.protocol_version != PROTOCOL_VERSION {
+            bail!(
+                "protocol version mismatch: daemon={} client={}",
+                envelope.protocol_version,
+                PROTOCOL_VERSION
+            );
+        }
+        let event = envelope.event;
         if !saw_event {
-            if let ServerEvent::Error { message } = event {
+            if let ServerEvent::Error { message } = &event {
                 bail!("{message}");
             }
             saw_event = true;

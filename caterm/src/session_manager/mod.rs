@@ -1,6 +1,7 @@
 mod command;
 mod event;
 mod pane;
+mod protocol;
 mod request;
 mod server;
 mod session;
@@ -8,7 +9,8 @@ mod snapshot;
 mod window;
 
 pub use command::{CommandResponse, CommandResult};
-pub use event::ServerEvent;
+pub use event::{EventEnvelope, ServerEvent};
+pub use protocol::PROTOCOL_VERSION;
 pub use request::{ClientOptions, SessionRequest};
 pub(crate) use server::{RequestEnvelope, RequestKind, RequestTx};
 pub use server::{

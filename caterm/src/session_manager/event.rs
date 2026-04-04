@@ -1,6 +1,22 @@
 use serde::{Deserialize, Serialize};
 
+use super::protocol::PROTOCOL_VERSION;
 use super::snapshot::{PaneSnapshot, ServerSnapshot, SessionSnapshot, WindowSnapshot};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventEnvelope {
+    pub protocol_version: u32,
+    pub event: ServerEvent,
+}
+
+impl EventEnvelope {
+    pub fn new(event: ServerEvent) -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            event,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

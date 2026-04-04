@@ -20,7 +20,7 @@
 
 ## Protocol and Events
 
-- [ ] Introduce stable protocol versioning
+- [x] Introduce stable protocol versioning
 - [ ] Add structured error codes in daemon responses
 - [ ] Add buffered PTY output snapshots for newly attached clients
 - [ ] Add explicit state-change events for active window/pane selection
