@@ -1,4 +1,4 @@
 [workspace]
-members = ["caterm"]
-default-members = ["caterm"]
+members = ["caterm", "caterm-relay"]
+default-members = ["caterm", "caterm-relay"]
 resolver = "3"

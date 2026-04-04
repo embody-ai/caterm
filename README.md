@@ -11,8 +11,8 @@ It is built around a simple but powerful idea:
 
 Caterm consists of three main components:
 
-1. **`caterm-server` package (Rust)** – runs on macOS and Linux, manages PTY and shell
-2. **Web Server** – handles authentication and real-time communication
+1. **`caterm` package (Rust)** – runs on macOS and Linux, manages PTY and shell
+2. **`caterm-relay` package (Rust)** – handles authentication and real-time communication
 3. **Clients** – web, mobile, or native apps for interacting with terminals
 
 Additionally, a **macOS SwiftUI app** provides a native GUI by connecting to the local CLI agent.
@@ -120,10 +120,22 @@ Caterm includes a native macOS application built with SwiftUI.
 
 ---
 
-## 📦 Installation (`caterm-server`)
+## 📦 Installation
 
 ```bash
-cargo build -p caterm-server
+cargo build -p caterm
+cargo build -p caterm-relay
+```
+
+## ▶️ Running The Relay
+
+```bash
+cargo run -p caterm-relay
+
+# Optional configuration
+# CATERM_RELAY_LISTEN_ADDR=0.0.0.0:8080
+# CATERM_RELAY_API_KEY=secret-for-daemons
+# CATERM_RELAY_SHARE_TOKEN=secret-for-clients
 ```
 
 ---
@@ -148,7 +160,7 @@ cargo build -p caterm-server
 
 ## 🛠 Tech Stack
 
-* **Rust** – `caterm-server`
+* **Rust** – `caterm`, `caterm-relay`
 * **WebSocket** – real-time communication
 * **Swift / SwiftUI** – macOS app
 * **Web (xterm.js)** – browser client

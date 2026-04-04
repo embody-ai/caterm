@@ -1,5 +1,6 @@
 mod config;
 mod pty;
+mod relay;
 mod session_manager;
 
 use std::env;

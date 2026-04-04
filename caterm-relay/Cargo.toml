@@ -1,28 +1,23 @@
 [package]
-name = "caterm"
+name = "caterm-relay"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Persistent terminal server for Caterm"
+description = "Relay server package for Caterm"
 readme = "../README.md"
 
-default-run = "caterm"
+default-run = "caterm-relay"
 
 [[bin]]
-name = "caterm"
+name = "caterm-relay"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
 futures-util = "0.3"
-portable-pty = "0.9"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+http = "1.4"
 tokio = { version = "1.45", features = ["full"] }
 tokio-tungstenite = "0.28"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-
-[dev-dependencies]
-assert_cmd = "2.0"
-tempfile = "3.15"
+uuid = { version = "1.18", features = ["v4"] }

@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
 
@@ -18,6 +19,13 @@ use super::request::{ClientOptions, ServerResponse, SessionRequest};
 use super::session::Session;
 use super::snapshot::ServerSnapshot;
 use super::window::Window;
+
+pub(crate) type RequestTx = mpsc::UnboundedSender<RequestEnvelope>;
+
+pub(crate) struct RequestEnvelope {
+    pub request: SessionRequest,
+    pub response_tx: oneshot::Sender<ServerResponse>,
+}
 
 pub struct SessionManagerServer {
     config: DaemonConfig,
@@ -60,11 +68,33 @@ impl SessionManagerServer {
         info!(socket = %self.socket_path.display(), "caterm server started");
         print_server_banner(&self.socket_path).await?;
 
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel();
+        let listener_task = spawn_local_listener(listener, request_tx.clone());
+        let relay_task = self
+            .config
+            .relay
+            .clone()
+            .map(|config| crate::relay::spawn_relay_client(config, request_tx.clone()));
+
         loop {
             tokio::select! {
-                accept_result = listener.accept() => {
-                    let (stream, _) = accept_result?;
-                    let should_stop = self.handle_connection(stream).await?;
+                request = request_rx.recv() => {
+                    let Some(request) = request else {
+                        break;
+                    };
+
+                    let should_stop = matches!(request.request, SessionRequest::Stop);
+                    let response = match self.handle_request(request.request).await {
+                        Ok(events) => ServerResponse { ok: true, events },
+                        Err(error) => ServerResponse {
+                            ok: false,
+                            events: vec![ServerEvent::Error {
+                                message: error.to_string(),
+                            }],
+                        },
+                    };
+
+                    let _ = request.response_tx.send(response);
                     if should_stop {
                         break;
                     }
@@ -75,6 +105,11 @@ impl SessionManagerServer {
                     break;
                 }
             }
+        }
+
+        listener_task.abort();
+        if let Some(task) = relay_task {
+            task.abort();
         }
 
         self.shutdown_all().await?;
@@ -88,35 +123,6 @@ impl SessionManagerServer {
         }
 
         Ok(())
-    }
-
-    async fn handle_connection(&mut self, stream: UnixStream) -> Result<bool> {
-        let (reader, mut writer) = stream.into_split();
-        let mut lines = BufReader::new(reader).lines();
-
-        let Some(line) = lines.next_line().await? else {
-            return Ok(false);
-        };
-
-        let request = serde_json::from_str::<SessionRequest>(&line)
-            .with_context(|| "failed to decode session request")?;
-        let should_stop = matches!(request, SessionRequest::Stop);
-        let response = match self.handle_request(request).await {
-            Ok(events) => ServerResponse { ok: true, events },
-            Err(error) => ServerResponse {
-                ok: false,
-                events: vec![ServerEvent::Error {
-                    message: error.to_string(),
-                }],
-            },
-        };
-
-        let payload = serde_json::to_string(&response)?;
-        writer.write_all(payload.as_bytes()).await?;
-        writer.write_all(b"\n").await?;
-        writer.flush().await?;
-
-        Ok(should_stop)
     }
 
     async fn handle_request(&mut self, request: SessionRequest) -> Result<Vec<ServerEvent>> {
@@ -629,6 +635,58 @@ impl SessionManagerServer {
 
         Ok(events)
     }
+}
+
+fn spawn_local_listener(listener: UnixListener, request_tx: RequestTx) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(result) => result,
+                Err(error) => {
+                    warn!(%error, "failed to accept local connection");
+                    break;
+                }
+            };
+
+            let request_tx = request_tx.clone();
+            tokio::spawn(async move {
+                if let Err(error) = handle_local_connection(stream, request_tx).await {
+                    warn!(?error, "local client request failed");
+                }
+            });
+        }
+    })
+}
+
+async fn handle_local_connection(stream: UnixStream, request_tx: RequestTx) -> Result<()> {
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+
+    let Some(line) = lines.next_line().await? else {
+        return Ok(());
+    };
+
+    let request = serde_json::from_str::<SessionRequest>(&line)
+        .with_context(|| "failed to decode session request")?;
+
+    let (response_tx, response_rx) = oneshot::channel();
+    request_tx
+        .send(RequestEnvelope {
+            request,
+            response_tx,
+        })
+        .map_err(|_| anyhow!("server request loop has stopped"))?;
+
+    let response = response_rx
+        .await
+        .map_err(|_| anyhow!("server request loop dropped the response"))?;
+
+    let payload = serde_json::to_string(&response)?;
+    writer.write_all(payload.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+
+    Ok(())
 }
 
 pub async fn send_client_request(
