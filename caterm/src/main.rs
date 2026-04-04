@@ -11,9 +11,10 @@ use tracing::info;
 
 use crate::config::DaemonConfig;
 use crate::session_manager::{
-    ClientOptions, CommandResponse, CommandResult, EventEnvelope, PROTOCOL_VERSION, ServerEvent,
-    ServerSnapshot, SessionManagerServer, SessionRequest, attach_client_stream,
-    default_socket_path, is_server_running, send_client_request,
+    ClientOptions, CommandResponse, CommandResult, DaemonStatus, EventEnvelope, PROTOCOL_VERSION,
+    ServerEvent, ServerSnapshot, SessionManagerServer, SessionRequest, attach_client_stream,
+    cleanup_stale_socket, daemon_status, default_socket_path, is_server_running,
+    send_client_request,
 };
 
 #[tokio::main]
@@ -49,15 +50,7 @@ async fn main() -> Result<()> {
                     client_options.socket_path.display()
                 );
             }
-
-            if client_options.socket_path.exists() {
-                std::fs::remove_file(&client_options.socket_path).with_context(|| {
-                    format!(
-                        "failed to remove stale socket {}",
-                        client_options.socket_path.display()
-                    )
-                })?;
-            }
+            cleanup_stale_socket(&client_options.socket_path).await?;
 
             info!(shell = %shell, socket = %client_options.socket_path.display(), "starting Caterm server");
             let mut server = SessionManagerServer::new(config, client_options.socket_path);
@@ -690,25 +683,48 @@ async fn run_client_command(options: &ClientOptions, request: SessionRequest) ->
 }
 
 async fn run_status_command(options: &ClientOptions) -> Result<()> {
-    let socket_exists = options.socket_path.exists();
-    let running = is_server_running(&options.socket_path).await;
     let mut stdout = io::stdout();
 
-    let message = if running {
-        format!(
-            "Caterm daemon is running on {}",
-            options.socket_path.display()
-        )
-    } else if socket_exists {
-        format!(
-            "Caterm daemon is not responding, but a stale socket exists at {}",
-            options.socket_path.display()
-        )
-    } else {
-        format!(
+    let message = match daemon_status(&options.socket_path).await? {
+        DaemonStatus::Running { pid } => match pid {
+            Some(pid) => format!(
+                "Caterm daemon is running on {} (pid {})",
+                options.socket_path.display(),
+                pid
+            ),
+            None => format!(
+                "Caterm daemon is running on {}",
+                options.socket_path.display()
+            ),
+        },
+        DaemonStatus::Stale {
+            pid,
+            metadata_path,
+            socket_exists,
+        } => {
+            if pid > 0 {
+                format!(
+                    "Caterm daemon is not responding. Stale pid {} recorded in {} for socket {}{}",
+                    pid,
+                    metadata_path.display(),
+                    options.socket_path.display(),
+                    if socket_exists {
+                        ""
+                    } else {
+                        " (socket already missing)"
+                    }
+                )
+            } else {
+                format!(
+                    "Caterm daemon is not responding, but a stale socket exists at {}",
+                    options.socket_path.display()
+                )
+            }
+        }
+        DaemonStatus::Stopped => format!(
             "Caterm daemon is not running. Expected socket: {}",
             options.socket_path.display()
-        )
+        ),
     };
 
     stdout.write_all(message.as_bytes()).await?;

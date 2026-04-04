@@ -4,6 +4,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use assert_cmd::cargo::cargo_bin;
+use serde_json::json;
 use tempfile::TempDir;
 
 fn bin_path() -> PathBuf {
@@ -86,6 +87,14 @@ fn wait_for_socket(socket_path: &Path) {
 
 fn stdout_text(output: &Output) -> String {
     String::from_utf8(output.stdout.clone()).expect("stdout is valid utf8")
+}
+
+fn metadata_path(socket_path: &Path) -> PathBuf {
+    let file_name = socket_path
+        .file_name()
+        .map(|name| format!("{}.meta.json", name.to_string_lossy()))
+        .unwrap_or_else(|| "caterm.meta.json".to_string());
+    socket_path.with_file_name(file_name)
 }
 
 #[test]
@@ -455,6 +464,7 @@ fn status_command_reports_running_and_stopped_states() {
     assert!(running.status.success(), "{}", stdout_text(&running));
     let running_stdout = stdout_text(&running);
     assert!(running_stdout.contains("Caterm daemon is running"));
+    assert!(running_stdout.contains("pid"));
     assert!(running_stdout.contains(daemon.socket_path.to_string_lossy().as_ref()));
 
     let stop = daemon.run(&["stop"]);
@@ -463,6 +473,68 @@ fn status_command_reports_running_and_stopped_states() {
     let stopped = daemon.run(&["status"]);
     assert!(stopped.status.success(), "{}", stdout_text(&stopped));
     assert!(stdout_text(&stopped).contains("Caterm daemon is not running"));
+}
+
+#[test]
+fn start_recovers_from_stale_socket_and_metadata() {
+    let tempdir = TempDir::new().expect("create tempdir");
+    let socket_path = tempdir.path().join("caterm.sock");
+    let metadata_path = metadata_path(&socket_path);
+
+    std::fs::write(&socket_path, b"stale").expect("write stale socket placeholder");
+    std::fs::write(
+        &metadata_path,
+        serde_json::to_vec(&json!({
+            "pid": 999_999u32,
+            "socket_path": socket_path,
+        }))
+        .expect("serialize metadata"),
+    )
+    .expect("write stale metadata");
+
+    let mut child = Command::new(bin_path())
+        .arg("start")
+        .arg("--socket")
+        .arg(&socket_path)
+        .env("RUST_LOG", "error")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start daemon over stale socket");
+
+    wait_for_socket(&socket_path);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let status = Command::new(bin_path())
+            .arg("--socket")
+            .arg(&socket_path)
+            .arg("status")
+            .output()
+            .expect("run status");
+        assert!(status.status.success(), "{}", stdout_text(&status));
+        if stdout_text(&status).contains("Caterm daemon is running") {
+            break;
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "daemon did not become healthy in time:\n{}",
+                stdout_text(&status)
+            );
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let stop = Command::new(bin_path())
+        .arg("--socket")
+        .arg(&socket_path)
+        .arg("stop")
+        .output()
+        .expect("stop daemon");
+    assert!(stop.status.success(), "{}", stdout_text(&stop));
+
+    let _ = child.wait();
 }
 
 #[test]

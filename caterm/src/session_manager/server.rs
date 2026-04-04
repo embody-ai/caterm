@@ -14,6 +14,9 @@ use crate::config::DaemonConfig;
 use crate::pty::PtySession;
 
 use super::command::{CommandResponse, CommandResult};
+use super::daemon_state::{
+    metadata_path, pid_is_alive, read_metadata, remove_metadata, write_metadata,
+};
 use super::event::{EventEnvelope, ServerEvent};
 use super::pane::Pane;
 use super::protocol::PROTOCOL_VERSION;
@@ -93,12 +96,7 @@ impl SessionManagerServer {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        if self.socket_path.exists() {
-            bail!(
-                "socket already exists at {}. If the server is not running, remove the stale socket first",
-                self.socket_path.display()
-            );
-        }
+        cleanup_stale_socket(&self.socket_path).await?;
 
         if let Some(parent) = self.socket_path.parent() {
             tokio::fs::create_dir_all(parent)
@@ -108,6 +106,7 @@ impl SessionManagerServer {
 
         let listener = UnixListener::bind(&self.socket_path)
             .with_context(|| format!("failed to bind {}", self.socket_path.display()))?;
+        write_metadata(&self.socket_path).await?;
 
         info!(socket = %self.socket_path.display(), "caterm server started");
         print_server_banner(&self.socket_path).await?;
@@ -185,6 +184,9 @@ impl SessionManagerServer {
             Err(error) => {
                 warn!(%error, socket = %self.socket_path.display(), "failed to remove socket")
             }
+        }
+        if let Err(error) = remove_metadata(&self.socket_path).await {
+            warn!(?error, socket = %self.socket_path.display(), "failed to remove metadata");
         }
 
         Ok(())
@@ -1850,6 +1852,32 @@ pub fn default_socket_path() -> PathBuf {
     env::temp_dir().join(format!("caterm-{user}.sock"))
 }
 
+pub async fn cleanup_stale_socket(socket_path: &Path) -> Result<()> {
+    let metadata = read_metadata(socket_path).await?;
+
+    if let Some(metadata) = &metadata {
+        if pid_is_alive(metadata.pid) && socket_path.exists() {
+            bail!(
+                "daemon already appears to be running at {} with pid {}",
+                socket_path.display(),
+                metadata.pid
+            );
+        }
+    }
+
+    if socket_path.exists() {
+        tokio::fs::remove_file(socket_path)
+            .await
+            .with_context(|| format!("failed to remove stale socket {}", socket_path.display()))?;
+    }
+
+    if metadata.is_some() {
+        remove_metadata(socket_path).await?;
+    }
+
+    Ok(())
+}
+
 pub async fn is_server_running(socket_path: &Path) -> bool {
     if !socket_path.exists() {
         return false;
@@ -1863,6 +1891,48 @@ pub async fn is_server_running(socket_path: &Path) -> bool {
         send_client_request(&options, SessionRequest::Ping).await,
         Ok(response) if response.ok
     )
+}
+
+pub async fn daemon_status(socket_path: &Path) -> Result<DaemonStatus> {
+    let socket_exists = socket_path.exists();
+    let metadata = read_metadata(socket_path).await?;
+    let running = is_server_running(socket_path).await;
+
+    if running {
+        return Ok(DaemonStatus::Running {
+            pid: metadata.as_ref().map(|entry| entry.pid),
+        });
+    }
+
+    if let Some(metadata) = metadata {
+        return Ok(DaemonStatus::Stale {
+            pid: metadata.pid,
+            metadata_path: metadata_path(socket_path),
+            socket_exists,
+        });
+    }
+
+    if socket_exists {
+        Ok(DaemonStatus::Stale {
+            pid: 0,
+            metadata_path: metadata_path(socket_path),
+            socket_exists: true,
+        })
+    } else {
+        Ok(DaemonStatus::Stopped)
+    }
+}
+
+pub enum DaemonStatus {
+    Running {
+        pid: Option<u32>,
+    },
+    Stale {
+        pid: u32,
+        metadata_path: PathBuf,
+        socket_exists: bool,
+    },
+    Stopped,
 }
 
 async fn print_server_banner(socket_path: &Path) -> Result<()> {
