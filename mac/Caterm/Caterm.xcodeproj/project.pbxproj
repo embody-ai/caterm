@@ -6,8 +6,17 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		072508AF2F811E9800D5E883 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 072508AE2F811E9800D5E883 /* GhosttyKit.xcframework */; };
+		072510A32F81242800D5E883 /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = 072510A12F81242800D5E883 /* ghostty */; };
+		072510A42F81242800D5E883 /* terminfo in Resources */ = {isa = PBXBuildFile; fileRef = 072510A22F81242800D5E883 /* terminfo */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		072508932F81048100D5E883 /* Caterm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Caterm.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		072508AE2F811E9800D5E883 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = GhosttyKit.xcframework; sourceTree = "<group>"; };
+		072510A12F81242800D5E883 /* ghostty */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ghostty; path = Resources/ghostty; sourceTree = "<group>"; };
+		072510A22F81242800D5E883 /* terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; name = terminfo; path = Resources/terminfo; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -23,6 +32,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				072508AF2F811E9800D5E883 /* GhosttyKit.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -32,8 +42,10 @@
 		0725088A2F81048100D5E883 = {
 			isa = PBXGroup;
 			children = (
-				072508A72F811D0E00D5E883 /* Frameworks */,
+				072510A12F81242800D5E883 /* ghostty */,
+				072510A22F81242800D5E883 /* terminfo */,
 				072508952F81048100D5E883 /* Caterm */,
+				072508A72F811D0E00D5E883 /* Frameworks */,
 				072508942F81048100D5E883 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -49,6 +61,7 @@
 		072508A72F811D0E00D5E883 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				072508AE2F811E9800D5E883 /* GhosttyKit.xcframework */,
 			);
 			path = Frameworks;
 			sourceTree = "<group>";
@@ -60,11 +73,9 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0725089E2F81048200D5E883 /* Build configuration list for PBXNativeTarget "Caterm" */;
 			buildPhases = (
-				A17250812F81048100D5E883 /* Build Ghostty Runtime */,
 				0725088F2F81048100D5E883 /* Sources */,
 				072508902F81048100D5E883 /* Frameworks */,
 				072508912F81048100D5E883 /* Resources */,
-				A17250822F81048100D5E883 /* Embed Ghostty Runtime */,
 			);
 			buildRules = (
 			);
@@ -119,60 +130,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				072510A32F81242800D5E883 /* ghostty in Resources */,
+				072510A42F81242800D5E883 /* terminfo in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		A17250812F81048100D5E883 /* Build Ghostty Runtime */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(SRCROOT)/../Makefile",
-				"$(SRCROOT)/../ThirdParty/ghostty/.git",
-			);
-			name = "Build Ghostty Runtime";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(SRCROOT)/Frameworks/macos/GhosttyKit.framework/GhosttyKit",
-				"$(SRCROOT)/../Resources/ghostty",
-				"$(SRCROOT)/../Resources/terminfo",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "if [[ \"${PLATFORM_NAME}\" != \"macosx\" ]]; then\n  exit 0\nfi\n\nmake -C \"${SRCROOT}/..\" build-ghostty-xcframework\n";
-		};
-		A17250822F81048100D5E883 /* Embed Ghostty Runtime */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(SRCROOT)/Frameworks/macos/GhosttyKit.framework/GhosttyKit",
-				"$(SRCROOT)/../Resources/ghostty",
-				"$(SRCROOT)/../Resources/terminfo",
-			);
-			name = "Embed Ghostty Runtime";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/GhosttyKit.framework/GhosttyKit",
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ghostty",
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/terminfo",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "if [[ \"${PLATFORM_NAME}\" != \"macosx\" ]]; then\n  exit 0\nfi\n\nframework_src=\"${SRCROOT}/Frameworks/macos/GhosttyKit.framework\"\nresources_src=\"${SRCROOT}/../Resources/ghostty\"\nterminfo_src=\"${SRCROOT}/../Resources/terminfo\"\nframework_dst=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nresources_dst=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n\nif [[ ! -d \"$framework_src\" ]]; then\n  echo \"error: missing Ghostty framework at $framework_src\"\n  exit 1\nfi\n\nmkdir -p \"$framework_dst\" \"$resources_dst\"\nrsync -a --delete \"$framework_src/\" \"$framework_dst/GhosttyKit.framework/\"\nrsync -a --delete \"$resources_src/\" \"$resources_dst/ghostty/\"\nrsync -a --delete \"$terminfo_src/\" \"$resources_dst/terminfo/\"\n\nif [[ \"${CODE_SIGNING_ALLOWED:-NO}\" == \"YES\" && -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]]; then\n  /usr/bin/codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --timestamp=none --preserve-metadata=identifier,entitlements,flags \"$framework_dst/GhosttyKit.framework\"\nfi\n";
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		0725088F2F81048100D5E883 /* Sources */ = {
