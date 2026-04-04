@@ -860,6 +860,9 @@ impl SessionManagerServer {
         let (events_tx, mut events_rx) = mpsc::unbounded_channel();
         let snapshot = snapshot_for_client(&self.snapshot(), client_state);
         let _ = events_tx.send(ServerEvent::Snapshot { snapshot });
+        for event in self.snapshot_output_events(filter) {
+            let _ = events_tx.send(event);
+        }
         self.subscribers.insert(
             subscriber_id,
             Subscriber {
@@ -900,6 +903,7 @@ impl SessionManagerServer {
             shell: self.config.shell.clone(),
             pty,
             output_rx,
+            output_history: String::new(),
             exit_code: None,
         })
     }
@@ -1187,11 +1191,13 @@ impl SessionManagerServer {
                 for (pane_id, pane) in &mut window.panes {
                     while let Ok(chunk) = pane.output_rx.try_recv() {
                         if !chunk.is_empty() {
+                            let data = String::from_utf8_lossy(&chunk).into_owned();
+                            pane.push_output_history(&data);
                             events.push(ServerEvent::PtyOutput {
                                 session_id: *session_id,
                                 window_id: *window_id,
                                 pane_id: *pane_id,
-                                data: String::from_utf8_lossy(&chunk).into_owned(),
+                                data,
                             });
                         }
                     }
@@ -1236,6 +1242,31 @@ impl SessionManagerServer {
             true
         });
     }
+
+    fn snapshot_output_events(&self, filter: AttachFilter) -> Vec<ServerEvent> {
+        let mut events = Vec::new();
+
+        for (session_id, session) in &self.sessions {
+            for (window_id, window) in &session.windows {
+                for (pane_id, pane) in &window.panes {
+                    if !filter.matches_pane(*session_id, *window_id, *pane_id) {
+                        continue;
+                    }
+                    if pane.output_history.is_empty() {
+                        continue;
+                    }
+                    events.push(ServerEvent::PtyOutputSnapshot {
+                        session_id: *session_id,
+                        window_id: *window_id,
+                        pane_id: *pane_id,
+                        data: pane.output_history.clone(),
+                    });
+                }
+            }
+        }
+
+        events
+    }
 }
 
 impl AttachFilter {
@@ -1261,6 +1292,12 @@ impl AttachFilter {
                 pane_id,
             } => self.matches_pane(*session_id, *window_id, *pane_id),
             ServerEvent::PtyOutput {
+                session_id,
+                window_id,
+                pane_id,
+                ..
+            } => self.matches_pane(*session_id, *window_id, *pane_id),
+            ServerEvent::PtyOutputSnapshot {
                 session_id,
                 window_id,
                 pane_id,
@@ -1566,6 +1603,7 @@ mod tests {
                                     pty: crate::pty::PtySession::spawn("sh", 80, 24)
                                         .expect("spawn pty"),
                                     output_rx: mpsc::unbounded_channel().1,
+                                    output_history: String::new(),
                                     exit_code: None,
                                 },
                             )]),

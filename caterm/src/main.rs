@@ -917,6 +917,9 @@ fn render_event(event: &ServerEvent) -> String {
             pane_id, session_id, window_id
         ),
         ServerEvent::PtyOutput { data, .. } => data.trim_end_matches(['\r', '\n']).to_string(),
+        ServerEvent::PtyOutputSnapshot { data, .. } => {
+            data.trim_end_matches(['\r', '\n']).to_string()
+        }
         ServerEvent::PaneExited {
             session_id,
             window_id,

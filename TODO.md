@@ -22,7 +22,7 @@
 
 - [x] Introduce stable protocol versioning
 - [x] Add structured error codes in daemon responses
-- [ ] Add buffered PTY output snapshots for newly attached clients
+- [x] Add buffered PTY output snapshots for newly attached clients
 - [ ] Add explicit state-change events for active window/pane selection
 - [ ] Add backpressure/output buffering strategy for busy PTYs
 

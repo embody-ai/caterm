@@ -494,6 +494,30 @@ fn attach_streams_live_events() {
 }
 
 #[test]
+fn attach_replays_buffered_output_snapshots() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+    let send = daemon.run(&["send-input", "work", "0", "0", "echo replay me\r"]);
+    assert!(send.status.success(), "{}", stdout_text(&send));
+
+    let mut attach = Command::new(bin_path())
+        .arg("--socket")
+        .arg(&daemon.socket_path)
+        .arg("attach")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start attach client");
+
+    thread::sleep(Duration::from_millis(200));
+    let _ = attach.kill();
+    let output = attach.wait_with_output().expect("collect attach output");
+    let stdout = stdout_text(&output);
+    assert!(stdout.contains("replay me"), "{stdout}");
+}
+
+#[test]
 fn attach_target_filters_to_a_single_pane() {
     let daemon = TestDaemon::start();
 

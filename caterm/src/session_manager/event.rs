@@ -55,6 +55,12 @@ pub enum ServerEvent {
         pane_id: u64,
         data: String,
     },
+    PtyOutputSnapshot {
+        session_id: u64,
+        window_id: u64,
+        pane_id: u64,
+        data: String,
+    },
     PaneExited {
         session_id: u64,
         window_id: u64,
