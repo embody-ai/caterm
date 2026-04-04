@@ -12,7 +12,7 @@
 
 - [x] Add `select-window` and `select-pane` commands
 - [x] Add `rename-session`, `rename-window`, and `rename-pane` commands
-- [ ] Define lifecycle rules for last-pane/last-window deletion
+- [x] Define lifecycle rules for last-pane/last-window deletion
 - [ ] Add automatic cleanup rules for empty windows and empty sessions
 - [ ] Add layout state for panes inside a window
 - [ ] Add horizontal/vertical split commands

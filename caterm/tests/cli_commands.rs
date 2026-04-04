@@ -313,6 +313,31 @@ fn kill_commands_remove_resources() {
 }
 
 #[test]
+fn kill_commands_reject_last_window_and_last_pane() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+
+    let kill_last_pane = daemon.run(&["kill-pane", "work", "0", "0"]);
+    assert!(!kill_last_pane.status.success());
+    assert!(stdout_text(&kill_last_pane).contains("cannot delete the last pane in window 1"));
+    let stderr = String::from_utf8(kill_last_pane.stderr).expect("stderr is valid utf8");
+    assert!(
+        stderr.contains("cannot delete the last pane in window 1"),
+        "{stderr}"
+    );
+
+    let kill_last_window = daemon.run(&["kill-window", "work", "0"]);
+    assert!(!kill_last_window.status.success());
+    assert!(stdout_text(&kill_last_window).contains("cannot delete the last window in session 1"));
+    let stderr = String::from_utf8(kill_last_window.stderr).expect("stderr is valid utf8");
+    assert!(
+        stderr.contains("cannot delete the last window in session 1"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn stop_command_succeeds() {
     let daemon = TestDaemon::start();
 

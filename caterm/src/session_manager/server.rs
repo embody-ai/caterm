@@ -830,6 +830,9 @@ impl SessionManagerServer {
             .sessions
             .get_mut(&session_id)
             .ok_or_else(|| anyhow!("session {session_id} not found"))?;
+        if session.windows.len() == 1 {
+            bail!("cannot delete the last window in session {session_id}");
+        }
 
         let window = session
             .windows
@@ -873,6 +876,9 @@ impl SessionManagerServer {
             .get_mut(&session_id)
             .and_then(|session| session.windows.get_mut(&window_id))
             .ok_or_else(|| anyhow!("window {window_id} not found"))?;
+        if window.panes.len() == 1 {
+            bail!("cannot delete the last pane in window {window_id}");
+        }
 
         let mut pane = window
             .panes
