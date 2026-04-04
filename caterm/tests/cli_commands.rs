@@ -247,6 +247,42 @@ fn split_commands_create_directional_layouts() {
 }
 
 #[test]
+fn resize_pane_updates_reported_sizes() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+    assert!(
+        daemon
+            .run(&["split-horizontal", "work", "0", "top"])
+            .status
+            .success()
+    );
+
+    let resize = daemon.run(&["resize-pane", "work", "0", "0", "10"]);
+    assert!(resize.status.success(), "{}", stdout_text(&resize));
+    assert!(
+        stdout_text(&resize).contains("Resized pane 0:1 (pane-1) to 60% in session 1, window 1")
+    );
+
+    let list = daemon.run(&["list"]);
+    assert!(list.status.success(), "{}", stdout_text(&list));
+    let stdout = stdout_text(&list);
+    assert!(stdout.contains("pane 0:1 (pane-1) size=60"), "{stdout}");
+    assert!(stdout.contains("pane 1:2 (top) size=40"), "{stdout}");
+}
+
+#[test]
+fn resize_pane_rejects_single_pane_windows() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+
+    let resize = daemon.run(&["resize-pane", "work", "0", "0", "10"]);
+    assert!(!resize.status.success());
+    assert!(stdout_text(&resize).contains("cannot resize a window with fewer than 2 panes"));
+}
+
+#[test]
 fn rename_commands_update_hierarchy_names() {
     let daemon = TestDaemon::start();
 

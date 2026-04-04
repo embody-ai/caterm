@@ -16,7 +16,7 @@
 - [x] Add automatic cleanup rules for empty windows and empty sessions
 - [x] Add layout state for panes inside a window
 - [x] Add horizontal/vertical split commands
-- [ ] Add pane resize commands
+- [x] Add pane resize commands
 
 ## Protocol and Events
 

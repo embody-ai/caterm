@@ -185,6 +185,23 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Mode::ResizePane {
+            session,
+            window,
+            target,
+            delta,
+        } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::ResizePane {
+                    session,
+                    window,
+                    target,
+                    delta,
+                },
+            )
+            .await
+        }
         Mode::KillSession { target } => {
             run_client_command(&client_options, SessionRequest::DeleteSession { target }).await
         }
@@ -304,6 +321,12 @@ enum Mode {
         window: String,
         target: String,
         name: String,
+    },
+    ResizePane {
+        session: String,
+        window: String,
+        target: String,
+        delta: i16,
     },
     KillSession {
         target: String,
@@ -499,6 +522,29 @@ impl Command {
                     };
                     mode_set = true;
                 }
+                "resize-pane" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("resize-pane requires a session id or name")?;
+                    let window = iter
+                        .next()
+                        .context("resize-pane requires a window id or name")?;
+                    let target = iter
+                        .next()
+                        .context("resize-pane requires a pane id or name")?;
+                    let delta = iter
+                        .next()
+                        .context("resize-pane requires a signed delta")?
+                        .parse::<i16>()
+                        .context("resize-pane delta must be an integer")?;
+                    command.mode = Mode::ResizePane {
+                        session,
+                        window,
+                        target,
+                        delta,
+                    };
+                    mode_set = true;
+                }
                 "kill-session" if !mode_set => {
                     let target = iter
                         .next()
@@ -601,6 +647,7 @@ Commands:
   rename-session   Rename a session
   rename-window    Rename a window in a session
   rename-pane      Rename a pane in a window
+  resize-pane      Resize a pane by a signed delta within its window
   kill-session     Delete a session by id or name
   kill-window      Delete a window by id or name within a session
   kill-pane        Delete a pane by id or name within a window
@@ -794,6 +841,14 @@ fn render_command_result(result: &CommandResult) -> String {
             "Renamed pane {}:{} to {} in session {}, window {}",
             pane.index, pane.id, pane.name, session_id, window_id
         ),
+        CommandResult::PaneResized {
+            session_id,
+            window_id,
+            pane,
+        } => format!(
+            "Resized pane {}:{} ({}) to {}% in session {}, window {}",
+            pane.index, pane.id, pane.name, pane.size, session_id, window_id
+        ),
         CommandResult::SessionDeleted { session_id } => format!("Deleted session {}", session_id),
         CommandResult::WindowDeleted {
             session_id,
@@ -930,8 +985,8 @@ fn render_snapshot(snapshot: &ServerSnapshot) -> String {
                     .map(|code| format!(" exit={code}"))
                     .unwrap_or_default();
                 lines.push(format!(
-                    "    pane {}:{} ({}) shell={}{}",
-                    pane.index, pane.id, pane.name, pane.shell, exit_suffix
+                    "    pane {}:{} ({}) size={} shell={}{}",
+                    pane.index, pane.id, pane.name, pane.size, pane.shell, exit_suffix
                 ));
             }
         }

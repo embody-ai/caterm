@@ -33,6 +33,7 @@ pub struct PaneSnapshot {
     pub id: u64,
     pub index: u32,
     pub name: String,
+    pub size: u16,
     pub shell: String,
     pub exit_code: Option<u32>,
 }

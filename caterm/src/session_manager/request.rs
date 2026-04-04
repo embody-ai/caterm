@@ -61,6 +61,12 @@ pub enum SessionRequest {
         target: String,
         name: String,
     },
+    ResizePane {
+        session: String,
+        window: String,
+        target: String,
+        delta: i16,
+    },
     DeleteSession {
         target: String,
     },

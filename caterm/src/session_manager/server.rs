@@ -297,6 +297,18 @@ impl SessionManagerServer {
                     outcome.broadcast_events.splice(0..0, runtime_events);
                     outcome
                 }),
+            SessionRequest::ResizePane {
+                session,
+                window,
+                target,
+                delta,
+            } => self
+                .resize_pane(&session, &window, &target, delta)
+                .await
+                .map(|mut outcome| {
+                    outcome.broadcast_events.splice(0..0, runtime_events);
+                    outcome
+                }),
             SessionRequest::DeleteSession { target } => {
                 self.delete_session(&target).await.map(|mut outcome| {
                     outcome.broadcast_events.splice(0..0, runtime_events);
@@ -581,6 +593,7 @@ impl SessionManagerServer {
             .ok_or_else(|| anyhow!("window {window_id} not found"))?;
         window.active_pane_id = Some(pane.id);
         window.panes.insert(pane.id, pane);
+        window.rebalance_pane_sizes();
         match layout {
             Some(layout) => window.set_split_layout(layout),
             None => window.sync_layout(),
@@ -810,6 +823,42 @@ impl SessionManagerServer {
         })
     }
 
+    async fn resize_pane(
+        &mut self,
+        session_target: &str,
+        window_target: &str,
+        target: &str,
+        delta: i16,
+    ) -> Result<CommandOutcome> {
+        let session_id = self.resolve_session_id(session_target)?;
+        let window_id = self.resolve_window_id(session_id, window_target)?;
+        let pane_id = self.resolve_pane_id(session_id, window_id, target)?;
+
+        let window = self
+            .sessions
+            .get_mut(&session_id)
+            .and_then(|session| session.windows.get_mut(&window_id))
+            .ok_or_else(|| anyhow!("window {window_id} not found"))?;
+        window.resize_pane(pane_id, delta)?;
+
+        let pane_snapshot = window
+            .panes
+            .get(&pane_id)
+            .expect("resized pane missing")
+            .snapshot();
+
+        Ok(CommandOutcome {
+            result: CommandResult::PaneResized {
+                session_id,
+                window_id,
+                pane: pane_snapshot,
+            },
+            broadcast_events: vec![ServerEvent::Snapshot {
+                snapshot: self.snapshot(),
+            }],
+        })
+    }
+
     fn attach_client(&mut self, request: SessionRequest) -> Result<AttachedClient> {
         let filter = self.resolve_attach_filter(request)?;
         let client_state = build_client_state(&self.sessions, filter);
@@ -854,6 +903,7 @@ impl SessionManagerServer {
             id,
             index,
             name,
+            size: 100,
             shell: self.config.shell.clone(),
             pty,
             output_rx,
@@ -946,6 +996,7 @@ impl SessionManagerServer {
             .panes
             .remove(&pane_id)
             .ok_or_else(|| anyhow!("pane {pane_id} not found"))?;
+        window.rebalance_pane_sizes();
         window.sync_layout();
         if window.active_pane_id == Some(pane_id) {
             window.active_pane_id = window.panes.keys().next().copied();
@@ -1517,6 +1568,7 @@ mod tests {
                                     id: 20,
                                     index: 0,
                                     name: "pane-20".to_string(),
+                                    size: 100,
                                     shell: "sh".to_string(),
                                     pty: crate::pty::PtySession::spawn("sh", 80, 24)
                                         .expect("spawn pty"),

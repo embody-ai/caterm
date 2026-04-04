@@ -8,6 +8,7 @@ pub struct Pane {
     pub id: u64,
     pub index: u32,
     pub name: String,
+    pub size: u16,
     pub shell: String,
     pub pty: PtySession,
     pub output_rx: mpsc::UnboundedReceiver<Vec<u8>>,
@@ -24,6 +25,7 @@ impl Pane {
             id: self.id,
             index: self.index,
             name: self.name.clone(),
+            size: self.size,
             shell: self.shell.clone(),
             exit_code: self.exit_code,
         }
