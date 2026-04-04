@@ -10,7 +10,7 @@ use tracing::{info, warn};
 
 use crate::config::RelayClientConfig;
 use crate::session_manager::{
-    RequestEnvelope, RequestKind, RequestTx, ServerResponse, SessionRequest,
+    CommandResponse, RequestEnvelope, RequestKind, RequestTx, SessionRequest,
 };
 
 pub fn spawn_relay_client(config: RelayClientConfig, request_tx: RequestTx) -> JoinHandle<()> {
@@ -72,7 +72,7 @@ async fn run_connection(config: &RelayClientConfig, request_tx: RequestTx) -> Re
 async fn dispatch_request(
     request_tx: &RequestTx,
     request: SessionRequest,
-) -> Result<ServerResponse> {
+) -> Result<CommandResponse> {
     let (response_tx, response_rx) = oneshot::channel();
     request_tx
         .send(RequestEnvelope {

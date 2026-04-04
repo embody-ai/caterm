@@ -134,7 +134,7 @@ fn new_window_and_new_pane_are_visible_in_list() {
 }
 
 #[test]
-fn send_input_prints_pane_output() {
+fn send_input_acknowledges_delivery() {
     let daemon = TestDaemon::start();
 
     assert!(daemon.run(&["new-session", "work"]).status.success());
@@ -142,7 +142,7 @@ fn send_input_prints_pane_output() {
     let send = daemon.run(&["send-input", "work", "0", "0", "echo hello from test\r"]);
     assert!(send.status.success(), "{}", stdout_text(&send));
     let stdout = stdout_text(&send);
-    assert!(stdout.contains("hello from test"));
+    assert!(stdout.contains("Accepted input for pane 1 in session 1, window 1"));
 }
 
 #[test]
@@ -258,10 +258,13 @@ fn attach_streams_live_events() {
 
     let create = daemon.run(&["new-session", "work"]);
     assert!(create.status.success(), "{}", stdout_text(&create));
+    let send = daemon.run(&["send-input", "work", "0", "0", "echo hello from attach\r"]);
+    assert!(send.status.success(), "{}", stdout_text(&send));
 
     thread::sleep(Duration::from_millis(200));
     let _ = attach.kill();
     let output = attach.wait_with_output().expect("collect attach output");
     let stdout = stdout_text(&output);
     assert!(stdout.contains("Created session 1 (work)"), "{stdout}");
+    assert!(stdout.contains("hello from attach"), "{stdout}");
 }

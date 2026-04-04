@@ -2,8 +2,6 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::event::ServerEvent;
-
 #[derive(Debug, Clone)]
 pub struct ClientOptions {
     pub socket_path: PathBuf,
@@ -46,10 +44,4 @@ pub enum SessionRequest {
     List,
     Stop,
     Ping,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerResponse {
-    pub ok: bool,
-    pub events: Vec<ServerEvent>,
 }

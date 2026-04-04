@@ -11,8 +11,9 @@ use tracing::info;
 
 use crate::config::DaemonConfig;
 use crate::session_manager::{
-    ClientOptions, ServerEvent, SessionManagerServer, SessionRequest, attach_client_stream,
-    default_socket_path, is_server_running, send_client_request,
+    ClientOptions, CommandResponse, CommandResult, ServerEvent, ServerSnapshot,
+    SessionManagerServer, SessionRequest, attach_client_stream, default_socket_path,
+    is_server_running, send_client_request,
 };
 
 #[tokio::main]
@@ -372,9 +373,9 @@ Environment:
 }
 
 async fn run_client_command(options: &ClientOptions, request: SessionRequest) -> Result<()> {
-    let response = send_client_request(options, request.clone()).await?;
+    let response = send_client_request(options, request).await?;
     let mut stdout = io::stdout();
-    let rendered = render_response(&request, &response.events);
+    let rendered = render_command_response(&response);
 
     if !rendered.is_empty() {
         stdout.write_all(rendered.as_bytes()).await?;
@@ -386,12 +387,7 @@ async fn run_client_command(options: &ClientOptions, request: SessionRequest) ->
         Ok(())
     } else {
         let message = response
-            .events
-            .into_iter()
-            .find_map(|event| match event {
-                ServerEvent::Error { message } => Some(message),
-                _ => None,
-            })
+            .error
             .unwrap_or_else(|| "request failed".to_string());
         bail!("{message}")
     }
@@ -432,7 +428,7 @@ async fn run_attach_command(options: &ClientOptions) -> Result<()> {
 
     while let Some(line) = lines.next_line().await? {
         let event: ServerEvent = serde_json::from_str(&line)?;
-        let rendered = render_event(&SessionRequest::Attach, &event);
+        let rendered = render_event(&event);
         if rendered.is_empty() {
             continue;
         }
@@ -445,25 +441,82 @@ async fn run_attach_command(options: &ClientOptions) -> Result<()> {
     Ok(())
 }
 
-fn render_response(request: &SessionRequest, events: &[ServerEvent]) -> String {
-    let mut lines = Vec::new();
-
-    for event in events {
-        let rendered = render_event(request, event);
-        if !rendered.is_empty() {
-            lines.push(rendered);
-        }
+fn render_command_response(response: &CommandResponse) -> String {
+    if !response.ok {
+        return response
+            .error
+            .clone()
+            .unwrap_or_else(|| "request failed".to_string());
     }
 
-    lines.join("\n")
+    match &response.result {
+        Some(result) => render_command_result(result),
+        None => String::new(),
+    }
 }
 
-fn render_event(request: &SessionRequest, event: &ServerEvent) -> String {
-    let show_pty_output = matches!(
-        request,
-        SessionRequest::SendInput { .. } | SessionRequest::Attach
-    );
+fn render_command_result(result: &CommandResult) -> String {
+    match result {
+        CommandResult::SessionCreated {
+            session,
+            initial_window: _,
+            initial_pane,
+        } => format!(
+            "Created session {} ({})\nCreated pane {}:{} ({})",
+            session.id, session.name, initial_pane.index, initial_pane.id, initial_pane.name
+        ),
+        CommandResult::WindowCreated {
+            session_id,
+            window,
+            initial_pane,
+        } => format!(
+            "Created window {}:{} ({}) in session {}\nCreated pane {}:{} ({}) in session {}, window {}",
+            window.index,
+            window.id,
+            window.name,
+            session_id,
+            initial_pane.index,
+            initial_pane.id,
+            initial_pane.name,
+            session_id,
+            window.id
+        ),
+        CommandResult::PaneCreated {
+            session_id,
+            window_id,
+            pane,
+        } => format!(
+            "Created pane {}:{} ({}) in session {}, window {}",
+            pane.index, pane.id, pane.name, session_id, window_id
+        ),
+        CommandResult::SessionDeleted { session_id } => format!("Deleted session {}", session_id),
+        CommandResult::WindowDeleted {
+            session_id,
+            window_id,
+        } => format!("Deleted window {} from session {}", window_id, session_id),
+        CommandResult::PaneDeleted {
+            session_id,
+            window_id,
+            pane_id,
+        } => format!(
+            "Deleted pane {} from session {}, window {}",
+            pane_id, session_id, window_id
+        ),
+        CommandResult::InputAccepted {
+            session_id,
+            window_id,
+            pane_id,
+        } => format!(
+            "Accepted input for pane {} in session {}, window {}",
+            pane_id, session_id, window_id
+        ),
+        CommandResult::SessionList { snapshot } => render_snapshot(snapshot),
+        CommandResult::Stopped => "Stopped Caterm daemon".to_string(),
+        CommandResult::Pong => "Pong".to_string(),
+    }
+}
 
+fn render_event(event: &ServerEvent) -> String {
     match event {
         ServerEvent::SessionCreated { session } => {
             format!("Created session {} ({})", session.id, session.name)
@@ -495,13 +548,7 @@ fn render_event(request: &SessionRequest, event: &ServerEvent) -> String {
             "Deleted pane {} from session {}, window {}",
             pane_id, session_id, window_id
         ),
-        ServerEvent::PtyOutput { data, .. } => {
-            if show_pty_output {
-                data.trim_end_matches(['\r', '\n']).to_string()
-            } else {
-                String::new()
-            }
-        }
+        ServerEvent::PtyOutput { data, .. } => data.trim_end_matches(['\r', '\n']).to_string(),
         ServerEvent::PaneExited {
             session_id,
             window_id,
@@ -511,50 +558,55 @@ fn render_event(request: &SessionRequest, event: &ServerEvent) -> String {
             "Pane {} in session {}, window {} exited with code {}",
             pane_id, session_id, window_id, exit_code
         ),
-        ServerEvent::SessionList { sessions } => {
-            if sessions.is_empty() {
-                "No active sessions".to_string()
-            } else {
-                let mut lines = Vec::new();
-                lines.push("Sessions:".to_string());
-                for session in sessions {
-                    lines.push(format!(
-                        "session {} ({}) active_window={}",
-                        session.id,
-                        session.name,
-                        session
-                            .active_window_index
-                            .map(|index| index.to_string())
-                            .unwrap_or_else(|| "-".to_string())
-                    ));
-                    for window in &session.windows {
-                        lines.push(format!(
-                            "  window {}:{} ({}) active_pane={}",
-                            window.index,
-                            window.id,
-                            window.name,
-                            window
-                                .active_pane_index
-                                .map(|index| index.to_string())
-                                .unwrap_or_else(|| "-".to_string())
-                        ));
-                        for pane in &window.panes {
-                            let exit_suffix = pane
-                                .exit_code
-                                .map(|code| format!(" exit={code}"))
-                                .unwrap_or_default();
-                            lines.push(format!(
-                                "    pane {}:{} ({}) shell={}{}",
-                                pane.index, pane.id, pane.name, pane.shell, exit_suffix
-                            ));
-                        }
-                    }
-                }
-                lines.join("\n")
-            }
-        }
-        ServerEvent::Snapshot { .. } => String::new(),
+        ServerEvent::SessionList { sessions } => render_snapshot(&ServerSnapshot {
+            sessions: sessions.clone(),
+        }),
+        ServerEvent::Snapshot { snapshot } => render_snapshot(snapshot),
         ServerEvent::Pong => "Pong".to_string(),
         ServerEvent::Error { message } => format!("Error: {message}"),
     }
+}
+
+fn render_snapshot(snapshot: &ServerSnapshot) -> String {
+    if snapshot.sessions.is_empty() {
+        return "No active sessions".to_string();
+    }
+
+    let mut lines = Vec::new();
+    lines.push("Sessions:".to_string());
+    for session in &snapshot.sessions {
+        lines.push(format!(
+            "session {} ({}) active_window={}",
+            session.id,
+            session.name,
+            session
+                .active_window_index
+                .map(|index| index.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ));
+        for window in &session.windows {
+            lines.push(format!(
+                "  window {}:{} ({}) active_pane={}",
+                window.index,
+                window.id,
+                window.name,
+                window
+                    .active_pane_index
+                    .map(|index| index.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ));
+            for pane in &window.panes {
+                let exit_suffix = pane
+                    .exit_code
+                    .map(|code| format!(" exit={code}"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "    pane {}:{} ({}) shell={}{}",
+                    pane.index, pane.id, pane.name, pane.shell, exit_suffix
+                ));
+            }
+        }
+    }
+
+    lines.join("\n")
 }
