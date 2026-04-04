@@ -33,7 +33,8 @@ pub(crate) enum RequestKind {
         response_tx: oneshot::Sender<CommandResponse>,
     },
     Attach {
-        attached_tx: oneshot::Sender<AttachedClient>,
+        request: SessionRequest,
+        attached_tx: oneshot::Sender<Result<AttachedClient, String>>,
     },
     Detach {
         subscriber_id: u64,
@@ -45,6 +46,18 @@ pub(crate) struct AttachedClient {
     pub events_rx: mpsc::UnboundedReceiver<ServerEvent>,
 }
 
+struct Subscriber {
+    filter: AttachFilter,
+    events_tx: mpsc::UnboundedSender<ServerEvent>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AttachFilter {
+    session_id: Option<u64>,
+    window_id: Option<u64>,
+    pane_id: Option<u64>,
+}
+
 pub struct SessionManagerServer {
     config: DaemonConfig,
     socket_path: PathBuf,
@@ -53,7 +66,7 @@ pub struct SessionManagerServer {
     next_window_id: u64,
     next_pane_id: u64,
     next_subscriber_id: u64,
-    subscribers: BTreeMap<u64, mpsc::UnboundedSender<ServerEvent>>,
+    subscribers: BTreeMap<u64, Subscriber>,
 }
 
 impl SessionManagerServer {
@@ -130,8 +143,13 @@ impl SessionManagerServer {
                                 break;
                             }
                         }
-                        RequestKind::Attach { attached_tx } => {
-                            let attached = self.attach_client();
+                        RequestKind::Attach {
+                            request,
+                            attached_tx,
+                        } => {
+                            let attached = self
+                                .attach_client(request)
+                                .map_err(|error| error.to_string());
                             let _ = attached_tx.send(attached);
                         }
                         RequestKind::Detach { subscriber_id } => {
@@ -175,7 +193,7 @@ impl SessionManagerServer {
         let runtime_events = self.collect_runtime_events()?;
 
         match request {
-            SessionRequest::Attach => {
+            SessionRequest::Attach { .. } => {
                 bail!("attach requires a streaming local connection");
             }
             SessionRequest::CreateSession { name } => {
@@ -489,15 +507,17 @@ impl SessionManagerServer {
         })
     }
 
-    fn attach_client(&mut self) -> AttachedClient {
+    fn attach_client(&mut self, request: SessionRequest) -> Result<AttachedClient> {
+        let filter = self.resolve_attach_filter(request)?;
         let subscriber_id = self.next_subscriber_id;
         self.next_subscriber_id += 1;
         let (events_tx, mut events_rx) = mpsc::unbounded_channel();
-        let snapshot = self.snapshot();
+        let snapshot = filter.filter_snapshot(self.snapshot());
         let _ = events_tx.send(ServerEvent::Snapshot { snapshot });
-        self.subscribers.insert(subscriber_id, events_tx);
+        self.subscribers
+            .insert(subscriber_id, Subscriber { filter, events_tx });
 
-        AttachedClient {
+        Ok(AttachedClient {
             subscriber_id,
             events_rx: {
                 let (bridge_tx, bridge_rx) = mpsc::unbounded_channel();
@@ -510,7 +530,7 @@ impl SessionManagerServer {
                 });
                 bridge_rx
             },
-        }
+        })
     }
 
     async fn spawn_pane(&mut self, name: String, index: u32) -> Result<Pane> {
@@ -725,6 +745,46 @@ impl SessionManagerServer {
             .ok_or_else(|| anyhow!("pane not found in window {window_id}: {target}"))
     }
 
+    fn resolve_attach_filter(&self, request: SessionRequest) -> Result<AttachFilter> {
+        match request {
+            SessionRequest::Attach {
+                session,
+                window,
+                pane,
+            } => {
+                let Some(session_target) = session else {
+                    return Ok(AttachFilter::default());
+                };
+
+                let session_id = self.resolve_session_id(&session_target)?;
+                let Some(window_target) = window else {
+                    return Ok(AttachFilter {
+                        session_id: Some(session_id),
+                        window_id: None,
+                        pane_id: None,
+                    });
+                };
+
+                let window_id = self.resolve_window_id(session_id, &window_target)?;
+                let Some(pane_target) = pane else {
+                    return Ok(AttachFilter {
+                        session_id: Some(session_id),
+                        window_id: Some(window_id),
+                        pane_id: None,
+                    });
+                };
+
+                let pane_id = self.resolve_pane_id(session_id, window_id, &pane_target)?;
+                Ok(AttachFilter {
+                    session_id: Some(session_id),
+                    window_id: Some(window_id),
+                    pane_id: Some(pane_id),
+                })
+            }
+            _ => bail!("attach requires attach request"),
+        }
+    }
+
     async fn shutdown_all(&mut self) -> Result<()> {
         let ids: Vec<u64> = self.sessions.keys().copied().collect();
 
@@ -790,14 +850,115 @@ impl SessionManagerServer {
     }
 
     fn broadcast_events(&mut self, events: &[ServerEvent]) {
-        self.subscribers.retain(|_, tx| {
+        self.subscribers.retain(|_, subscriber| {
             for event in events {
-                if tx.send(event.clone()).is_err() {
+                if !subscriber.filter.matches_event(event) {
+                    continue;
+                }
+                if subscriber.events_tx.send(event.clone()).is_err() {
                     return false;
                 }
             }
             true
         });
+    }
+}
+
+impl AttachFilter {
+    fn matches_event(&self, event: &ServerEvent) -> bool {
+        match event {
+            ServerEvent::SessionCreated { session } => self.matches_session(session.id),
+            ServerEvent::WindowCreated { session_id, window } => {
+                self.matches_window(*session_id, window.id)
+            }
+            ServerEvent::PaneCreated {
+                session_id,
+                window_id,
+                pane,
+            } => self.matches_pane(*session_id, *window_id, pane.id),
+            ServerEvent::SessionDeleted { session_id } => self.matches_session(*session_id),
+            ServerEvent::WindowDeleted {
+                session_id,
+                window_id,
+            } => self.matches_window(*session_id, *window_id),
+            ServerEvent::PaneDeleted {
+                session_id,
+                window_id,
+                pane_id,
+            } => self.matches_pane(*session_id, *window_id, *pane_id),
+            ServerEvent::PtyOutput {
+                session_id,
+                window_id,
+                pane_id,
+                ..
+            } => self.matches_pane(*session_id, *window_id, *pane_id),
+            ServerEvent::PaneExited {
+                session_id,
+                window_id,
+                pane_id,
+                ..
+            } => self.matches_pane(*session_id, *window_id, *pane_id),
+            ServerEvent::SessionList { sessions } => sessions
+                .iter()
+                .any(|session| self.session_id.is_none() || self.session_id == Some(session.id)),
+            ServerEvent::Snapshot { snapshot } => {
+                !self.filter_snapshot(snapshot.clone()).sessions.is_empty()
+            }
+            ServerEvent::Pong | ServerEvent::Error { .. } => true,
+        }
+    }
+
+    fn filter_snapshot(&self, mut snapshot: ServerSnapshot) -> ServerSnapshot {
+        if let Some(session_id) = self.session_id {
+            snapshot.sessions.retain(|session| session.id == session_id);
+        }
+
+        if let Some(window_id) = self.window_id {
+            for session in &mut snapshot.sessions {
+                session.windows.retain(|window| window.id == window_id);
+                session.active_window_id = session
+                    .active_window_id
+                    .filter(|active_window_id| *active_window_id == window_id);
+                session.active_window_index = session.windows.first().map(|window| window.index);
+            }
+            snapshot
+                .sessions
+                .retain(|session| !session.windows.is_empty());
+        }
+
+        if let Some(pane_id) = self.pane_id {
+            for session in &mut snapshot.sessions {
+                for window in &mut session.windows {
+                    window.panes.retain(|pane| pane.id == pane_id);
+                    window.active_pane_id = window
+                        .active_pane_id
+                        .filter(|active_pane_id| *active_pane_id == pane_id);
+                    window.active_pane_index = window.panes.first().map(|pane| pane.index);
+                }
+                session.windows.retain(|window| !window.panes.is_empty());
+                session.active_window_id = session.windows.first().map(|window| window.id);
+                session.active_window_index = session.windows.first().map(|window| window.index);
+            }
+            snapshot
+                .sessions
+                .retain(|session| !session.windows.is_empty());
+        }
+
+        snapshot
+    }
+
+    fn matches_session(&self, session_id: u64) -> bool {
+        self.session_id.is_none() || self.session_id == Some(session_id)
+    }
+
+    fn matches_window(&self, session_id: u64, window_id: u64) -> bool {
+        self.matches_session(session_id)
+            && (self.window_id.is_none() || self.window_id == Some(window_id))
+    }
+
+    fn matches_pane(&self, session_id: u64, window_id: u64, pane_id: u64) -> bool {
+        self.matches_window(session_id, window_id)
+            && (self.pane_id.is_none() || self.pane_id == Some(pane_id))
     }
 }
 
@@ -833,20 +994,33 @@ async fn handle_local_connection(stream: UnixStream, request_tx: RequestTx) -> R
     let request = serde_json::from_str::<SessionRequest>(&line)
         .with_context(|| "failed to decode session request")?;
 
-    if matches!(request, SessionRequest::Attach) {
+    if matches!(request, SessionRequest::Attach { .. }) {
         let (attached_tx, attached_rx) = oneshot::channel();
         request_tx
             .send(RequestEnvelope {
-                kind: RequestKind::Attach { attached_tx },
+                kind: RequestKind::Attach {
+                    request,
+                    attached_tx,
+                },
             })
             .map_err(|_| anyhow!("server request loop has stopped"))?;
 
+        let attached = attached_rx
+            .await
+            .map_err(|_| anyhow!("server request loop dropped attach response"))?;
         let AttachedClient {
             subscriber_id,
             mut events_rx,
-        } = attached_rx
-            .await
-            .map_err(|_| anyhow!("server request loop dropped attach response"))?;
+        } = match attached {
+            Ok(client) => client,
+            Err(message) => {
+                let payload = serde_json::to_string(&ServerEvent::Error { message })?;
+                writer.write_all(payload.as_bytes()).await?;
+                writer.write_all(b"\n").await?;
+                writer.flush().await?;
+                return Ok(());
+            }
+        };
 
         while let Some(event) = events_rx.recv().await {
             let payload = serde_json::to_string(&event)?;
@@ -925,6 +1099,7 @@ struct CommandOutcome {
 
 pub async fn attach_client_stream(
     options: &ClientOptions,
+    request: SessionRequest,
 ) -> Result<tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>> {
     let stream = UnixStream::connect(&options.socket_path)
         .await
@@ -935,7 +1110,7 @@ pub async fn attach_client_stream(
             )
         })?;
     let (reader, mut writer) = stream.into_split();
-    let payload = serde_json::to_string(&SessionRequest::Attach)?;
+    let payload = serde_json::to_string(&request)?;
 
     writer.write_all(payload.as_bytes()).await?;
     writer.write_all(b"\n").await?;

@@ -5,7 +5,7 @@
 - [x] Add a `status` command to report whether the local daemon is running and which socket it uses
 - [x] Add an attach/subscribe model so clients can maintain a persistent connection to the daemon
 - [x] Split command/response control traffic from long-lived event streaming
-- [ ] Add explicit client attach targets for session/window/pane
+- [x] Add explicit client attach targets for session/window/pane
 - [ ] Add per-client active session/window/pane tracking
 
 ## Session, Window, Pane Model

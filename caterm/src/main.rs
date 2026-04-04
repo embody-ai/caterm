@@ -64,7 +64,11 @@ async fn main() -> Result<()> {
             server.run().await
         }
         Mode::Status => run_status_command(&client_options).await,
-        Mode::Attach => run_attach_command(&client_options).await,
+        Mode::Attach {
+            session,
+            window,
+            pane,
+        } => run_attach_command(&client_options, session, window, pane).await,
         Mode::NewSession { name } => {
             run_client_command(&client_options, SessionRequest::CreateSession { name }).await
         }
@@ -159,7 +163,11 @@ struct Command {
 enum Mode {
     Start,
     Status,
-    Attach,
+    Attach {
+        session: Option<String>,
+        window: Option<String>,
+        pane: Option<String>,
+    },
     NewSession {
         name: Option<String>,
     },
@@ -226,7 +234,17 @@ impl Command {
                     mode_set = true;
                 }
                 "attach" if !mode_set => {
-                    command.mode = Mode::Attach;
+                    let session = iter.next();
+                    let window = iter.next();
+                    let pane = iter.next();
+                    if iter.next().is_some() {
+                        bail!("attach accepts at most a session, window, and pane target");
+                    }
+                    command.mode = Mode::Attach {
+                        session,
+                        window,
+                        pane,
+                    };
                     mode_set = true;
                 }
                 "new-session" if !mode_set => {
@@ -348,7 +366,7 @@ Usage:
 Commands:
   start            Start the local Caterm server (default)
   status           Show whether the local Caterm server is running
-  attach           Subscribe to live daemon events
+  attach           Subscribe to live daemon events for an optional session/window/pane target
   new-session      Create a session with an initial window and pane
   new-window       Create a window in a session
   new-pane         Create a pane in a window
@@ -422,12 +440,32 @@ async fn run_status_command(options: &ClientOptions) -> Result<()> {
     Ok(())
 }
 
-async fn run_attach_command(options: &ClientOptions) -> Result<()> {
-    let mut lines = attach_client_stream(options).await?;
+async fn run_attach_command(
+    options: &ClientOptions,
+    session: Option<String>,
+    window: Option<String>,
+    pane: Option<String>,
+) -> Result<()> {
+    let mut lines = attach_client_stream(
+        options,
+        SessionRequest::Attach {
+            session,
+            window,
+            pane,
+        },
+    )
+    .await?;
     let mut stdout = io::stdout();
+    let mut saw_event = false;
 
     while let Some(line) = lines.next_line().await? {
         let event: ServerEvent = serde_json::from_str(&line)?;
+        if !saw_event {
+            if let ServerEvent::Error { message } = event {
+                bail!("{message}");
+            }
+            saw_event = true;
+        }
         let rendered = render_event(&event);
         if rendered.is_empty() {
             continue;

@@ -268,3 +268,43 @@ fn attach_streams_live_events() {
     assert!(stdout.contains("Created session 1 (work)"), "{stdout}");
     assert!(stdout.contains("hello from attach"), "{stdout}");
 }
+
+#[test]
+fn attach_target_filters_to_a_single_pane() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+    assert!(daemon.run(&["new-session", "personal"]).status.success());
+
+    let mut attach = Command::new(bin_path())
+        .arg("--socket")
+        .arg(&daemon.socket_path)
+        .args(["attach", "work", "0", "0"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start targeted attach client");
+
+    thread::sleep(Duration::from_millis(100));
+
+    let work_send = daemon.run(&["send-input", "work", "0", "0", "echo hello-work\r"]);
+    assert!(work_send.status.success(), "{}", stdout_text(&work_send));
+    let personal_send = daemon.run(&["send-input", "personal", "0", "0", "echo hello-personal\r"]);
+    assert!(
+        personal_send.status.success(),
+        "{}",
+        stdout_text(&personal_send)
+    );
+
+    thread::sleep(Duration::from_millis(250));
+    let _ = attach.kill();
+    let output = attach
+        .wait_with_output()
+        .expect("collect targeted attach output");
+    let stdout = stdout_text(&output);
+
+    assert!(stdout.contains("session 1 (work)"), "{stdout}");
+    assert!(!stdout.contains("session 2 (personal)"), "{stdout}");
+    assert!(stdout.contains("hello-work"), "{stdout}");
+    assert!(!stdout.contains("hello-personal"), "{stdout}");
+}
