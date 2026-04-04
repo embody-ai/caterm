@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use super::snapshot::ServerSnapshot;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonMetadata {
     pub pid: u32,
@@ -14,6 +16,15 @@ pub fn metadata_path(socket_path: &Path) -> PathBuf {
         .file_name()
         .map(|name| format!("{}.meta.json", name.to_string_lossy()))
         .unwrap_or_else(|| "caterm.meta.json".to_string());
+
+    socket_path.with_file_name(file_name)
+}
+
+pub fn state_path(socket_path: &Path) -> PathBuf {
+    let file_name = socket_path
+        .file_name()
+        .map(|name| format!("{}.state.json", name.to_string_lossy()))
+        .unwrap_or_else(|| "caterm.state.json".to_string());
 
     socket_path.with_file_name(file_name)
 }
@@ -60,4 +71,27 @@ pub async fn remove_metadata(socket_path: &Path) -> Result<()> {
 pub fn pid_is_alive(pid: u32) -> bool {
     let result = unsafe { libc::kill(pid as i32, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+pub async fn write_state(socket_path: &Path, snapshot: &ServerSnapshot) -> Result<()> {
+    let state_path = state_path(socket_path);
+    let payload = serde_json::to_vec_pretty(snapshot)?;
+    tokio::fs::write(&state_path, payload)
+        .await
+        .with_context(|| format!("failed to write {}", state_path.display()))
+}
+
+pub async fn read_state(socket_path: &Path) -> Result<Option<ServerSnapshot>> {
+    let state_path = state_path(socket_path);
+    let bytes = match tokio::fs::read(&state_path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", state_path.display()));
+        }
+    };
+
+    let snapshot = serde_json::from_slice::<ServerSnapshot>(&bytes)
+        .with_context(|| format!("failed to decode {}", state_path.display()))?;
+    Ok(Some(snapshot))
 }

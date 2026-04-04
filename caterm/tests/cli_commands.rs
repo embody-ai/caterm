@@ -538,6 +538,83 @@ fn start_recovers_from_stale_socket_and_metadata() {
 }
 
 #[test]
+fn restart_restores_persisted_hierarchy_state() {
+    let tempdir = TempDir::new().expect("create tempdir");
+    let socket_path = tempdir.path().join("caterm.sock");
+
+    let mut first = Command::new(bin_path())
+        .arg("start")
+        .arg("--socket")
+        .arg(&socket_path)
+        .env("RUST_LOG", "error")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start first daemon");
+    wait_for_socket(&socket_path);
+
+    let run = |args: &[&str]| {
+        Command::new(bin_path())
+            .arg("--socket")
+            .arg(&socket_path)
+            .args(args)
+            .output()
+            .expect("run command")
+    };
+
+    assert!(run(&["new-session", "work"]).status.success());
+    assert!(run(&["new-window", "work", "editor"]).status.success());
+    assert!(
+        run(&["split-vertical", "work", "editor", "side"])
+            .status
+            .success()
+    );
+    assert!(
+        run(&["rename-pane", "work", "editor", "side", "tail"])
+            .status
+            .success()
+    );
+
+    let stop = run(&["stop"]);
+    assert!(stop.status.success(), "{}", stdout_text(&stop));
+    let _ = first.wait();
+
+    let mut second = Command::new(bin_path())
+        .arg("start")
+        .arg("--socket")
+        .arg(&socket_path)
+        .env("RUST_LOG", "error")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start second daemon");
+    wait_for_socket(&socket_path);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let list = run(&["list"]);
+        assert!(list.status.success(), "{}", stdout_text(&list));
+        let stdout = stdout_text(&list);
+        if stdout.contains("session 1 (work)")
+            && stdout.contains("window 1:2 (editor) layout=vertical")
+            && stdout.contains("pane 1:3 (tail)")
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            panic!("restored state not visible in time:\n{stdout}");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let stop = run(&["stop"]);
+    assert!(stop.status.success(), "{}", stdout_text(&stop));
+    let _ = second.wait();
+}
+
+#[test]
 fn attach_streams_live_events() {
     let daemon = TestDaemon::start();
 

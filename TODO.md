@@ -29,7 +29,7 @@
 ## Daemon Runtime
 
 - [x] Add stale socket and PID handling beyond simple socket removal
-- [ ] Add daemon metadata persistence and recovery strategy
+- [x] Add daemon metadata persistence and recovery strategy
 - [ ] Add log file support for the daemon
 - [ ] Add launchd/systemd-friendly foreground/background ergonomics
 

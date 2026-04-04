@@ -15,7 +15,8 @@ use crate::pty::PtySession;
 
 use super::command::{CommandResponse, CommandResult};
 use super::daemon_state::{
-    metadata_path, pid_is_alive, read_metadata, remove_metadata, write_metadata,
+    metadata_path, pid_is_alive, read_metadata, read_state, remove_metadata, write_metadata,
+    write_state,
 };
 use super::event::{EventEnvelope, ServerEvent};
 use super::pane::Pane;
@@ -107,6 +108,8 @@ impl SessionManagerServer {
         let listener = UnixListener::bind(&self.socket_path)
             .with_context(|| format!("failed to bind {}", self.socket_path.display()))?;
         write_metadata(&self.socket_path).await?;
+        self.restore_state().await?;
+        self.persist_state().await?;
 
         info!(socket = %self.socket_path.display(), "caterm server started");
         print_server_banner(&self.socket_path).await?;
@@ -132,6 +135,7 @@ impl SessionManagerServer {
                             let should_stop = matches!(request, SessionRequest::Stop);
                             let response = match self.handle_request(request).await {
                                 Ok(outcome) => {
+                                    self.persist_state().await?;
                                     self.broadcast_events(&outcome.broadcast_events);
                                     CommandResponse::success(outcome.result)
                                 }
@@ -1178,6 +1182,78 @@ impl SessionManagerServer {
         Ok(())
     }
 
+    async fn persist_state(&self) -> Result<()> {
+        write_state(&self.socket_path, &self.snapshot()).await
+    }
+
+    async fn restore_state(&mut self) -> Result<()> {
+        let Some(snapshot) = read_state(&self.socket_path).await? else {
+            return Ok(());
+        };
+
+        self.sessions.clear();
+        self.next_session_id = 1;
+        self.next_window_id = 1;
+        self.next_pane_id = 1;
+
+        for session_snapshot in snapshot.sessions {
+            let mut session = Session {
+                id: session_snapshot.id,
+                name: session_snapshot.name,
+                windows: BTreeMap::new(),
+                active_window_id: session_snapshot.active_window_id,
+            };
+
+            self.next_session_id = self.next_session_id.max(session.id + 1);
+
+            for window_snapshot in session_snapshot.windows {
+                let mut window = Window {
+                    id: window_snapshot.id,
+                    index: window_snapshot.index,
+                    name: window_snapshot.name,
+                    layout: parse_layout(&window_snapshot.layout),
+                    panes: BTreeMap::new(),
+                    active_pane_id: window_snapshot.active_pane_id,
+                };
+
+                self.next_window_id = self.next_window_id.max(window.id + 1);
+
+                for pane_snapshot in window_snapshot.panes {
+                    let mut pty = PtySession::spawn(
+                        &pane_snapshot.shell,
+                        self.config.cols,
+                        self.config.rows,
+                    )?;
+                    let (output_tx, output_rx) = mpsc::unbounded_channel();
+                    pty.start_output_pump(output_tx).await?;
+
+                    let pane = Pane {
+                        id: pane_snapshot.id,
+                        index: pane_snapshot.index,
+                        name: pane_snapshot.name,
+                        size: pane_snapshot.size,
+                        shell: pane_snapshot.shell,
+                        pty,
+                        output_rx,
+                        output_history: String::new(),
+                        pending_output: String::new(),
+                        dropped_output_bytes: 0,
+                        exit_code: None,
+                    };
+
+                    self.next_pane_id = self.next_pane_id.max(pane.id + 1);
+                    window.panes.insert(pane.id, pane);
+                }
+
+                session.windows.insert(window.id, window);
+            }
+
+            self.sessions.insert(session.id, session);
+        }
+
+        Ok(())
+    }
+
     async fn terminate_session(&self, session: Session) {
         for (_, window) in session.windows {
             self.terminate_window(window).await;
@@ -1588,6 +1664,15 @@ fn prune_empty_containers(sessions: &mut BTreeMap<u64, Session>) {
     }
 
     sessions.retain(|_, session| !session.windows.is_empty());
+}
+
+fn parse_layout(layout: &str) -> WindowLayout {
+    match layout {
+        "horizontal" => WindowLayout::Horizontal,
+        "vertical" => WindowLayout::Vertical,
+        "tiled" => WindowLayout::Tiled,
+        _ => WindowLayout::Single,
+    }
 }
 
 #[cfg(test)]
