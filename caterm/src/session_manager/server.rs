@@ -1659,7 +1659,7 @@ async fn handle_local_connection(stream: UnixStream, request_tx: RequestTx) -> R
             Ok(client) => client,
             Err(message) => {
                 let payload =
-                    serde_json::to_string(&EventEnvelope::new(ServerEvent::Error { message }))?;
+                    serde_json::to_string(&EventEnvelope::new(ServerEvent::error(message)))?;
                 writer.write_all(payload.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
                 writer.flush().await?;

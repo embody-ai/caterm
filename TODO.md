@@ -21,7 +21,7 @@
 ## Protocol and Events
 
 - [x] Introduce stable protocol versioning
-- [ ] Add structured error codes in daemon responses
+- [x] Add structured error codes in daemon responses
 - [ ] Add buffered PTY output snapshots for newly attached clients
 - [ ] Add explicit state-change events for active window/pane selection
 - [ ] Add backpressure/output buffering strategy for busy PTYs

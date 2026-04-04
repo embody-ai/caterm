@@ -747,7 +747,7 @@ async fn run_attach_command(
         }
         let event = envelope.event;
         if !saw_event {
-            if let ServerEvent::Error { message } = &event {
+            if let ServerEvent::Error { message, .. } = &event {
                 bail!("{message}");
             }
             saw_event = true;
@@ -934,7 +934,7 @@ fn render_event(event: &ServerEvent) -> String {
         }),
         ServerEvent::Snapshot { snapshot } => render_snapshot(snapshot),
         ServerEvent::Pong => "Pong".to_string(),
-        ServerEvent::Error { message } => format!("Error: {message}"),
+        ServerEvent::Error { message, .. } => format!("Error: {message}"),
     }
 }
 

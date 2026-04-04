@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::error::classify_error;
 use super::protocol::PROTOCOL_VERSION;
 use super::snapshot::{PaneSnapshot, ServerSnapshot, SessionSnapshot, WindowSnapshot};
 
@@ -9,6 +10,7 @@ pub struct CommandResponse {
     pub ok: bool,
     pub result: Option<CommandResult>,
     pub error: Option<String>,
+    pub error_code: Option<String>,
 }
 
 impl CommandResponse {
@@ -18,6 +20,7 @@ impl CommandResponse {
             ok: true,
             result: Some(result),
             error: None,
+            error_code: None,
         }
     }
 
@@ -26,6 +29,7 @@ impl CommandResponse {
             protocol_version: PROTOCOL_VERSION,
             ok: false,
             result: None,
+            error_code: Some(classify_error(&error).to_string()),
             error: Some(error),
         }
     }

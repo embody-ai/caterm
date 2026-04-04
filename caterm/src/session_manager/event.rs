@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::error::classify_error;
 use super::protocol::PROTOCOL_VERSION;
 use super::snapshot::{PaneSnapshot, ServerSnapshot, SessionSnapshot, WindowSnapshot};
 
@@ -65,6 +66,17 @@ pub enum ServerEvent {
     },
     Pong,
     Error {
+        code: String,
         message: String,
     },
+}
+
+impl ServerEvent {
+    pub fn error(message: impl Into<String>) -> Self {
+        let message = message.into();
+        Self::Error {
+            code: classify_error(&message).to_string(),
+            message,
+        }
+    }
 }
