@@ -222,3 +222,21 @@ fn stop_command_succeeds() {
     let stop = daemon.run(&["stop"]);
     assert!(stop.status.success(), "{}", stdout_text(&stop));
 }
+
+#[test]
+fn status_command_reports_running_and_stopped_states() {
+    let daemon = TestDaemon::start();
+
+    let running = daemon.run(&["status"]);
+    assert!(running.status.success(), "{}", stdout_text(&running));
+    let running_stdout = stdout_text(&running);
+    assert!(running_stdout.contains("Caterm daemon is running"));
+    assert!(running_stdout.contains(daemon.socket_path.to_string_lossy().as_ref()));
+
+    let stop = daemon.run(&["stop"]);
+    assert!(stop.status.success(), "{}", stdout_text(&stop));
+
+    let stopped = daemon.run(&["status"]);
+    assert!(stopped.status.success(), "{}", stdout_text(&stopped));
+    assert!(stdout_text(&stopped).contains("Caterm daemon is not running"));
+}

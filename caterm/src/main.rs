@@ -62,6 +62,7 @@ async fn main() -> Result<()> {
             let mut server = SessionManagerServer::new(config, client_options.socket_path);
             server.run().await
         }
+        Mode::Status => run_status_command(&client_options).await,
         Mode::NewSession { name } => {
             run_client_command(&client_options, SessionRequest::CreateSession { name }).await
         }
@@ -155,6 +156,7 @@ struct Command {
 #[derive(Debug, Default, Clone)]
 enum Mode {
     Start,
+    Status,
     NewSession {
         name: Option<String>,
     },
@@ -214,6 +216,10 @@ impl Command {
                 }
                 "start" if !mode_set => {
                     command.mode = Mode::Start;
+                    mode_set = true;
+                }
+                "status" if !mode_set => {
+                    command.mode = Mode::Status;
                     mode_set = true;
                 }
                 "new-session" if !mode_set => {
@@ -334,6 +340,7 @@ Usage:
 
 Commands:
   start            Start the local Caterm server (default)
+  status           Show whether the local Caterm server is running
   new-session      Create a session with an initial window and pane
   new-window       Create a window in a session
   new-pane         Create a pane in a window
@@ -381,6 +388,35 @@ async fn run_client_command(options: &ClientOptions, request: SessionRequest) ->
             .unwrap_or_else(|| "request failed".to_string());
         bail!("{message}")
     }
+}
+
+async fn run_status_command(options: &ClientOptions) -> Result<()> {
+    let socket_exists = options.socket_path.exists();
+    let running = is_server_running(&options.socket_path).await;
+    let mut stdout = io::stdout();
+
+    let message = if running {
+        format!(
+            "Caterm daemon is running on {}",
+            options.socket_path.display()
+        )
+    } else if socket_exists {
+        format!(
+            "Caterm daemon is not responding, but a stale socket exists at {}",
+            options.socket_path.display()
+        )
+    } else {
+        format!(
+            "Caterm daemon is not running. Expected socket: {}",
+            options.socket_path.display()
+        )
+    };
+
+    stdout.write_all(message.as_bytes()).await?;
+    stdout.write_all(b"\n").await?;
+    stdout.flush().await?;
+
+    Ok(())
 }
 
 fn render_response(request: &SessionRequest, events: &[ServerEvent]) -> String {
