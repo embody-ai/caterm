@@ -80,6 +80,27 @@ impl PtySession {
         Ok(())
     }
 
+    pub async fn start_discard_output(&mut self) -> Result<()> {
+        let mut reader = self
+            .reader
+            .take()
+            .context("PTY output pump already started")?;
+
+        task::spawn_blocking(move || {
+            let mut buffer = vec![0_u8; 8192];
+
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Ok(())
+    }
+
     pub async fn write_all(&self, bytes: &[u8]) -> Result<()> {
         let writer = Arc::clone(&self.writer);
         let payload = bytes.to_vec();
