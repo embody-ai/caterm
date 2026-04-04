@@ -3,7 +3,7 @@ build/
 DerivedData/
 
 # Generated Ghostty artifacts
-Frameworks/*
+Caterm/Frameworks/*
 Resources/
 
 # User-specific Xcode state

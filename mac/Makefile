@@ -16,7 +16,7 @@ DERIVED_DATA_PATH ?= $(CURRENT_MAKEFILE_DIR)/build/DerivedData
 XCODEBUILD_FLAGS ?=
 
 GHOSTTY_SUBMODULE_PATH := $(CURRENT_MAKEFILE_DIR)/ThirdParty/ghostty
-GHOSTTY_FRAMEWORKS_DIR := $(CURRENT_MAKEFILE_DIR)/Frameworks
+GHOSTTY_FRAMEWORKS_DIR := $(CURRENT_MAKEFILE_DIR)/Caterm/Frameworks
 GHOSTTY_RESOURCES_DIR := $(CURRENT_MAKEFILE_DIR)/Resources
 GHOSTTY_XCFRAMEWORK_PATH := $(GHOSTTY_FRAMEWORKS_DIR)/GhosttyKit.xcframework
 GHOSTTY_MACOS_FRAMEWORK_DIR := $(GHOSTTY_FRAMEWORKS_DIR)/macos
@@ -48,7 +48,7 @@ doctor: # Check required local tools
 		exit 1; \
 	fi
 
-build-ghostty-xcframework: $(GHOSTTY_BUILD_OUTPUTS) # Build and stage Ghostty artifacts under mac/Frameworks and mac/Resources
+build-ghostty-xcframework: $(GHOSTTY_BUILD_OUTPUTS) # Build and stage Ghostty artifacts under mac/Caterm/Frameworks and mac/Resources
 
 $(GHOSTTY_BUILD_OUTPUTS): | doctor submodules
 	@set -euo pipefail; \
