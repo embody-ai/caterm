@@ -654,9 +654,15 @@ impl SessionManagerServer {
                 session_id,
                 window: window_snapshot,
             },
-            broadcast_events: vec![ServerEvent::Snapshot {
-                snapshot: self.snapshot(),
-            }],
+            broadcast_events: vec![
+                ServerEvent::ActiveWindowChanged {
+                    session_id,
+                    window_id,
+                },
+                ServerEvent::Snapshot {
+                    snapshot: self.snapshot(),
+                },
+            ],
         })
     }
 
@@ -690,9 +696,16 @@ impl SessionManagerServer {
                 window_id,
                 pane: pane_snapshot,
             },
-            broadcast_events: vec![ServerEvent::Snapshot {
-                snapshot: self.snapshot(),
-            }],
+            broadcast_events: vec![
+                ServerEvent::ActivePaneChanged {
+                    session_id,
+                    window_id,
+                    pane_id,
+                },
+                ServerEvent::Snapshot {
+                    snapshot: self.snapshot(),
+                },
+            ],
         })
     }
 
@@ -1281,6 +1294,15 @@ impl AttachFilter {
                 window_id,
                 pane,
             } => self.matches_pane(*session_id, *window_id, pane.id),
+            ServerEvent::ActiveWindowChanged {
+                session_id,
+                window_id,
+            } => self.matches_window(*session_id, *window_id),
+            ServerEvent::ActivePaneChanged {
+                session_id,
+                window_id,
+                pane_id,
+            } => self.matches_pane(*session_id, *window_id, *pane_id),
             ServerEvent::SessionDeleted { session_id } => self.matches_session(*session_id),
             ServerEvent::WindowDeleted {
                 session_id,

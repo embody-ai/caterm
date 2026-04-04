@@ -37,6 +37,15 @@ pub enum ServerEvent {
         window_id: u64,
         pane: PaneSnapshot,
     },
+    ActiveWindowChanged {
+        session_id: u64,
+        window_id: u64,
+    },
+    ActivePaneChanged {
+        session_id: u64,
+        window_id: u64,
+        pane_id: u64,
+    },
     SessionDeleted {
         session_id: u64,
     },

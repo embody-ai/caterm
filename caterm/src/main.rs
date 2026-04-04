@@ -901,6 +901,21 @@ fn render_event(event: &ServerEvent) -> String {
             "Created pane {}:{} ({}) in session {}, window {}",
             pane.index, pane.id, pane.name, session_id, window_id
         ),
+        ServerEvent::ActiveWindowChanged {
+            session_id,
+            window_id,
+        } => format!(
+            "Active window changed to {} in session {}",
+            window_id, session_id
+        ),
+        ServerEvent::ActivePaneChanged {
+            session_id,
+            window_id,
+            pane_id,
+        } => format!(
+            "Active pane changed to {} in session {}, window {}",
+            pane_id, session_id, window_id
+        ),
         ServerEvent::SessionDeleted { session_id } => {
             format!("Deleted session {}", session_id)
         }

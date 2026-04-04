@@ -560,3 +560,60 @@ fn attach_target_filters_to_a_single_pane() {
     assert!(stdout.contains("hello-work"), "{stdout}");
     assert!(!stdout.contains("hello-personal"), "{stdout}");
 }
+
+#[test]
+fn attach_streams_active_selection_events() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+    assert!(
+        daemon
+            .run(&["new-window", "work", "editor"])
+            .status
+            .success()
+    );
+    assert!(
+        daemon
+            .run(&["new-pane", "work", "editor", "logs"])
+            .status
+            .success()
+    );
+
+    let mut attach = Command::new(bin_path())
+        .arg("--socket")
+        .arg(&daemon.socket_path)
+        .arg("attach")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start attach client");
+
+    thread::sleep(Duration::from_millis(100));
+
+    let select_window = daemon.run(&["select-window", "work", "editor"]);
+    assert!(
+        select_window.status.success(),
+        "{}",
+        stdout_text(&select_window)
+    );
+    let select_pane = daemon.run(&["select-pane", "work", "editor", "logs"]);
+    assert!(
+        select_pane.status.success(),
+        "{}",
+        stdout_text(&select_pane)
+    );
+
+    thread::sleep(Duration::from_millis(200));
+    let _ = attach.kill();
+    let output = attach.wait_with_output().expect("collect attach output");
+    let stdout = stdout_text(&output);
+
+    assert!(
+        stdout.contains("Active window changed to 2 in session 1"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Active pane changed to 3 in session 1, window 2"),
+        "{stdout}"
+    );
+}
