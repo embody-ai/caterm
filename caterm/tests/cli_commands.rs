@@ -615,6 +615,38 @@ fn restart_restores_persisted_hierarchy_state() {
 }
 
 #[test]
+fn daemon_writes_logs_to_configured_file() {
+    let tempdir = TempDir::new().expect("create tempdir");
+    let socket_path = tempdir.path().join("caterm.sock");
+    let log_path = tempdir.path().join("caterm.log");
+
+    let mut child = Command::new(bin_path())
+        .arg("start")
+        .arg("--socket")
+        .arg(&socket_path)
+        .env("RUST_LOG", "info")
+        .env("CATERM_LOG_FILE", &log_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start daemon with log file");
+    wait_for_socket(&socket_path);
+
+    let stop = Command::new(bin_path())
+        .arg("--socket")
+        .arg(&socket_path)
+        .arg("stop")
+        .output()
+        .expect("stop daemon");
+    assert!(stop.status.success(), "{}", stdout_text(&stop));
+    let _ = child.wait();
+
+    let contents = std::fs::read_to_string(&log_path).expect("read log file");
+    assert!(contents.contains("starting Caterm server"), "{contents}");
+}
+
+#[test]
 fn attach_streams_live_events() {
     let daemon = TestDaemon::start();
 

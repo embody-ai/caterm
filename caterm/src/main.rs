@@ -4,10 +4,12 @@ mod relay;
 mod session_manager;
 
 use std::env;
+use std::fs::OpenOptions;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::{self, AsyncWriteExt};
 use tracing::info;
+use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::config::DaemonConfig;
 use crate::session_manager::{
@@ -31,9 +33,8 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    init_tracing();
-
     let config = DaemonConfig::from_env();
+    let _tracing_guard = init_tracing(&config)?;
     let shell = config.shell.clone();
     let client_options = ClientOptions {
         socket_path: command
@@ -243,14 +244,30 @@ async fn main() -> Result<()> {
     }
 }
 
-fn init_tracing() {
+fn init_tracing(config: &DaemonConfig) -> Result<Option<WorkerGuard>> {
     let filter = env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
-
-    tracing_subscriber::fmt()
+    let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
-        .compact()
-        .init();
+        .compact();
+
+    if let Some(path) = &config.log_file {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("failed to open {}", path.display()))?;
+        let (writer, guard) = tracing_appender::non_blocking(file);
+        builder.with_writer(writer).init();
+        Ok(Some(guard))
+    } else {
+        builder.init();
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -656,6 +673,7 @@ Options:
 Environment:
   CATERM_SHELL     Override the shell used for the PTY session
   CATERM_SOCKET    Override the default Unix socket path
+  CATERM_LOG_FILE  Write daemon logs to the given file
   SHELL            Fallback shell if CATERM_SHELL is not set
   RUST_LOG         Configure tracing output"
     )

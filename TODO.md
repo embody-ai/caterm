@@ -30,7 +30,7 @@
 
 - [x] Add stale socket and PID handling beyond simple socket removal
 - [x] Add daemon metadata persistence and recovery strategy
-- [ ] Add log file support for the daemon
+- [x] Add log file support for the daemon
 - [ ] Add launchd/systemd-friendly foreground/background ergonomics
 
 ## Testing

@@ -1,5 +1,5 @@
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const DEFAULT_COLS: u16 = 120;
 pub const DEFAULT_ROWS: u16 = 32;
@@ -8,6 +8,7 @@ pub struct DaemonConfig {
     pub shell: String,
     pub cols: u16,
     pub rows: u16,
+    pub log_file: Option<PathBuf>,
     pub relay: Option<RelayClientConfig>,
 }
 
@@ -24,6 +25,7 @@ impl DaemonConfig {
             shell: resolve_shell(),
             cols: DEFAULT_COLS,
             rows: DEFAULT_ROWS,
+            log_file: resolve_log_file(),
             relay: resolve_relay(),
         }
     }
@@ -68,4 +70,13 @@ fn resolve_relay() -> Option<RelayClientConfig> {
         session_id: session_id.to_string(),
         api_key,
     })
+}
+
+fn resolve_log_file() -> Option<PathBuf> {
+    let path = env::var("CATERM_LOG_FILE").ok()?;
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(path))
 }
