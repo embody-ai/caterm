@@ -44,9 +44,9 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(SRCROOT)/../build/ghostty/Frameworks/macos/GhosttyKit.framework/GhosttyKit",
-				"$(SRCROOT)/../build/ghostty/Resources/ghostty",
-				"$(SRCROOT)/../build/ghostty/Resources/terminfo",
+				"$(SRCROOT)/../Frameworks/macos/GhosttyKit.framework/GhosttyKit",
+				"$(SRCROOT)/../Resources/ghostty",
+				"$(SRCROOT)/../Resources/terminfo",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
@@ -60,9 +60,9 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/../build/ghostty/Frameworks/macos/GhosttyKit.framework/GhosttyKit",
-				"$(SRCROOT)/../build/ghostty/Resources/ghostty",
-				"$(SRCROOT)/../build/ghostty/Resources/terminfo",
+				"$(SRCROOT)/../Frameworks/macos/GhosttyKit.framework/GhosttyKit",
+				"$(SRCROOT)/../Resources/ghostty",
+				"$(SRCROOT)/../Resources/terminfo",
 			);
 			name = "Embed Ghostty Runtime";
 			outputFileListPaths = (
@@ -74,7 +74,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "if [[ \"${PLATFORM_NAME}\" != \"macosx\" ]]; then\n  exit 0\nfi\n\nframework_src=\"${SRCROOT}/../build/ghostty/Frameworks/macos/GhosttyKit.framework\"\nresources_src=\"${SRCROOT}/../build/ghostty/Resources/ghostty\"\nterminfo_src=\"${SRCROOT}/../build/ghostty/Resources/terminfo\"\nframework_dst=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nresources_dst=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n\nif [[ ! -d \"$framework_src\" ]]; then\n  echo \"error: missing Ghostty framework at $framework_src\"\n  exit 1\nfi\n\nmkdir -p \"$framework_dst\" \"$resources_dst\"\nrsync -a --delete \"$framework_src/\" \"$framework_dst/GhosttyKit.framework/\"\nrsync -a --delete \"$resources_src/\" \"$resources_dst/ghostty/\"\nrsync -a --delete \"$terminfo_src/\" \"$resources_dst/terminfo/\"\n\nif [[ \"${CODE_SIGNING_ALLOWED:-NO}\" == \"YES\" && -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]]; then\n  /usr/bin/codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --timestamp=none --preserve-metadata=identifier,entitlements,flags \"$framework_dst/GhosttyKit.framework\"\nfi\n";
+			shellScript = "if [[ \"${PLATFORM_NAME}\" != \"macosx\" ]]; then\n  exit 0\nfi\n\nframework_src=\"${SRCROOT}/../Frameworks/macos/GhosttyKit.framework\"\nresources_src=\"${SRCROOT}/../Resources/ghostty\"\nterminfo_src=\"${SRCROOT}/../Resources/terminfo\"\nframework_dst=\"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nresources_dst=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n\nif [[ ! -d \"$framework_src\" ]]; then\n  echo \"error: missing Ghostty framework at $framework_src\"\n  exit 1\nfi\n\nmkdir -p \"$framework_dst\" \"$resources_dst\"\nrsync -a --delete \"$framework_src/\" \"$framework_dst/GhosttyKit.framework/\"\nrsync -a --delete \"$resources_src/\" \"$resources_dst/ghostty/\"\nrsync -a --delete \"$terminfo_src/\" \"$resources_dst/terminfo/\"\n\nif [[ \"${CODE_SIGNING_ALLOWED:-NO}\" == \"YES\" && -n \"${EXPANDED_CODE_SIGN_IDENTITY:-}\" ]]; then\n  /usr/bin/codesign --force --sign \"${EXPANDED_CODE_SIGN_IDENTITY}\" --timestamp=none --preserve-metadata=identifier,entitlements,flags \"$framework_dst/GhosttyKit.framework\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -308,7 +308,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				"FRAMEWORK_SEARCH_PATHS[sdk=macosx*]" = (
 					"$(inherited)",
-					"$(SRCROOT)/../build/ghostty/Frameworks/macos",
+					"$(SRCROOT)/../Frameworks/macos",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Caterm;
@@ -365,7 +365,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				"FRAMEWORK_SEARCH_PATHS[sdk=macosx*]" = (
 					"$(inherited)",
-					"$(SRCROOT)/../build/ghostty/Frameworks/macos",
+					"$(SRCROOT)/../Frameworks/macos",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Caterm;

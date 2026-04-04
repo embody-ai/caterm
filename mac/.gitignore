@@ -2,6 +2,10 @@
 build/
 DerivedData/
 
+# Generated Ghostty artifacts
+Frameworks/*
+Resources/
+
 # User-specific Xcode state
 *.xcuserstate
 xcuserdata/
