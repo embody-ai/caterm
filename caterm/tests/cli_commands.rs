@@ -203,6 +203,50 @@ fn list_shows_single_and_tiled_layout_state() {
 }
 
 #[test]
+fn split_commands_create_directional_layouts() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+
+    let split_horizontal = daemon.run(&["split-horizontal", "work", "0", "top"]);
+    assert!(
+        split_horizontal.status.success(),
+        "{}",
+        stdout_text(&split_horizontal)
+    );
+    assert!(
+        stdout_text(&split_horizontal).contains("with horizontal layout; created pane 1:2 (top)")
+    );
+
+    assert!(
+        daemon
+            .run(&["new-window", "work", "editor"])
+            .status
+            .success()
+    );
+
+    let split_vertical = daemon.run(&["split-vertical", "work", "editor", "side"]);
+    assert!(
+        split_vertical.status.success(),
+        "{}",
+        stdout_text(&split_vertical)
+    );
+    assert!(stdout_text(&split_vertical).contains("with vertical layout; created pane 1:4 (side)"));
+
+    let list = daemon.run(&["list"]);
+    assert!(list.status.success(), "{}", stdout_text(&list));
+    let stdout = stdout_text(&list);
+    assert!(
+        stdout.contains("window 0:1 (window-0) layout=horizontal"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("window 1:2 (editor) layout=vertical"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn rename_commands_update_hierarchy_names() {
     let daemon = TestDaemon::start();
 

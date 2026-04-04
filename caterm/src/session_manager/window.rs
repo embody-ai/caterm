@@ -7,6 +7,8 @@ use super::snapshot::WindowSnapshot;
 pub enum WindowLayout {
     Single,
     Tiled,
+    Horizontal,
+    Vertical,
 }
 
 pub struct Window {
@@ -34,8 +36,21 @@ impl Window {
     pub fn sync_layout(&mut self) {
         self.layout = if self.panes.len() <= 1 {
             WindowLayout::Single
+        } else if matches!(
+            self.layout,
+            WindowLayout::Horizontal | WindowLayout::Vertical
+        ) {
+            self.layout
         } else {
             WindowLayout::Tiled
+        };
+    }
+
+    pub fn set_split_layout(&mut self, layout: WindowLayout) {
+        self.layout = if self.panes.len() <= 1 {
+            WindowLayout::Single
+        } else {
+            layout
         };
     }
 
@@ -60,6 +75,8 @@ impl WindowLayout {
         match self {
             Self::Single => "single",
             Self::Tiled => "tiled",
+            Self::Horizontal => "horizontal",
+            Self::Vertical => "vertical",
         }
     }
 }

@@ -27,6 +27,16 @@ pub enum SessionRequest {
         window: String,
         name: Option<String>,
     },
+    SplitHorizontal {
+        session: String,
+        window: String,
+        name: Option<String>,
+    },
+    SplitVertical {
+        session: String,
+        window: String,
+        name: Option<String>,
+    },
     SelectWindow {
         session: String,
         target: String,

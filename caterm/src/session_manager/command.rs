@@ -27,6 +27,12 @@ pub enum CommandResult {
         window_id: u64,
         pane: PaneSnapshot,
     },
+    PaneSplit {
+        session_id: u64,
+        window_id: u64,
+        layout: String,
+        pane: PaneSnapshot,
+    },
     WindowSelected {
         session_id: u64,
         window: WindowSnapshot,

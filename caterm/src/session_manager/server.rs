@@ -227,6 +227,28 @@ impl SessionManagerServer {
                     outcome.broadcast_events.splice(0..0, runtime_events);
                     outcome
                 }),
+            SessionRequest::SplitHorizontal {
+                session,
+                window,
+                name,
+            } => self
+                .split_pane(&session, &window, name, WindowLayout::Horizontal)
+                .await
+                .map(|mut outcome| {
+                    outcome.broadcast_events.splice(0..0, runtime_events);
+                    outcome
+                }),
+            SessionRequest::SplitVertical {
+                session,
+                window,
+                name,
+            } => self
+                .split_pane(&session, &window, name, WindowLayout::Vertical)
+                .await
+                .map(|mut outcome| {
+                    outcome.broadcast_events.splice(0..0, runtime_events);
+                    outcome
+                }),
             SessionRequest::SelectWindow { session, target } => self
                 .select_window(&session, &target)
                 .await
@@ -507,6 +529,28 @@ impl SessionManagerServer {
         window_target: &str,
         name: Option<String>,
     ) -> Result<CommandOutcome> {
+        self.create_pane_with_layout(session_target, window_target, name, None)
+            .await
+    }
+
+    async fn split_pane(
+        &mut self,
+        session_target: &str,
+        window_target: &str,
+        name: Option<String>,
+        layout: WindowLayout,
+    ) -> Result<CommandOutcome> {
+        self.create_pane_with_layout(session_target, window_target, name, Some(layout))
+            .await
+    }
+
+    async fn create_pane_with_layout(
+        &mut self,
+        session_target: &str,
+        window_target: &str,
+        name: Option<String>,
+        layout: Option<WindowLayout>,
+    ) -> Result<CommandOutcome> {
         let session_id = self.resolve_session_id(session_target)?;
         let window_id = self.resolve_window_id(session_id, window_target)?;
         let pane_id = self.next_pane_id;
@@ -537,7 +581,10 @@ impl SessionManagerServer {
             .ok_or_else(|| anyhow!("window {window_id} not found"))?;
         window.active_pane_id = Some(pane.id);
         window.panes.insert(pane.id, pane);
-        window.sync_layout();
+        match layout {
+            Some(layout) => window.set_split_layout(layout),
+            None => window.sync_layout(),
+        }
 
         let pane_snapshot = self
             .sessions
@@ -548,10 +595,18 @@ impl SessionManagerServer {
             .snapshot();
 
         Ok(CommandOutcome {
-            result: CommandResult::PaneCreated {
-                session_id,
-                window_id,
-                pane: pane_snapshot.clone(),
+            result: match layout {
+                Some(layout) => CommandResult::PaneSplit {
+                    session_id,
+                    window_id,
+                    layout: layout.as_str().to_string(),
+                    pane: pane_snapshot.clone(),
+                },
+                None => CommandResult::PaneCreated {
+                    session_id,
+                    window_id,
+                    pane: pane_snapshot.clone(),
+                },
             },
             broadcast_events: vec![
                 ServerEvent::PaneCreated {

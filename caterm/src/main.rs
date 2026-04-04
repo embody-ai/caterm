@@ -94,6 +94,36 @@ async fn main() -> Result<()> {
             )
             .await
         }
+        Mode::SplitHorizontal {
+            session,
+            window,
+            name,
+        } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::SplitHorizontal {
+                    session,
+                    window,
+                    name,
+                },
+            )
+            .await
+        }
+        Mode::SplitVertical {
+            session,
+            window,
+            name,
+        } => {
+            run_client_command(
+                &client_options,
+                SessionRequest::SplitVertical {
+                    session,
+                    window,
+                    name,
+                },
+            )
+            .await
+        }
         Mode::SelectWindow { session, target } => {
             run_client_command(
                 &client_options,
@@ -241,6 +271,16 @@ enum Mode {
         window: String,
         name: Option<String>,
     },
+    SplitHorizontal {
+        session: String,
+        window: String,
+        name: Option<String>,
+    },
+    SplitVertical {
+        session: String,
+        window: String,
+        name: Option<String>,
+    },
     SelectWindow {
         session: String,
         target: String,
@@ -354,6 +394,36 @@ impl Command {
                         .context("new-pane requires a window id or name")?;
                     let name = iter.next();
                     command.mode = Mode::NewPane {
+                        session,
+                        window,
+                        name,
+                    };
+                    mode_set = true;
+                }
+                "split-horizontal" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("split-horizontal requires a session id or name")?;
+                    let window = iter
+                        .next()
+                        .context("split-horizontal requires a window id or name")?;
+                    let name = iter.next();
+                    command.mode = Mode::SplitHorizontal {
+                        session,
+                        window,
+                        name,
+                    };
+                    mode_set = true;
+                }
+                "split-vertical" if !mode_set => {
+                    let session = iter
+                        .next()
+                        .context("split-vertical requires a session id or name")?;
+                    let window = iter
+                        .next()
+                        .context("split-vertical requires a window id or name")?;
+                    let name = iter.next();
+                    command.mode = Mode::SplitVertical {
                         session,
                         window,
                         name,
@@ -524,6 +594,8 @@ Commands:
   new-session      Create a session with an initial window and pane
   new-window       Create a window in a session
   new-pane         Create a pane in a window
+  split-horizontal Split a window into horizontal panes
+  split-vertical   Split a window into vertical panes
   select-window    Select the active window in a session
   select-pane      Select the active pane in a window
   rename-session   Rename a session
@@ -685,6 +757,15 @@ fn render_command_result(result: &CommandResult) -> String {
         } => format!(
             "Created pane {}:{} ({}) in session {}, window {}",
             pane.index, pane.id, pane.name, session_id, window_id
+        ),
+        CommandResult::PaneSplit {
+            session_id,
+            window_id,
+            layout,
+            pane,
+        } => format!(
+            "Split window {} in session {} with {} layout; created pane {}:{} ({})",
+            window_id, session_id, layout, pane.index, pane.id, pane.name
         ),
         CommandResult::WindowSelected { session_id, window } => format!(
             "Selected window {}:{} ({}) in session {}",

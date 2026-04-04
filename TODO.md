@@ -15,7 +15,7 @@
 - [x] Define lifecycle rules for last-pane/last-window deletion
 - [x] Add automatic cleanup rules for empty windows and empty sessions
 - [x] Add layout state for panes inside a window
-- [ ] Add horizontal/vertical split commands
+- [x] Add horizontal/vertical split commands
 - [ ] Add pane resize commands
 
 ## Protocol and Events
