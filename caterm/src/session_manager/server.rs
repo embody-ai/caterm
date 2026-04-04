@@ -917,6 +917,8 @@ impl SessionManagerServer {
             pty,
             output_rx,
             output_history: String::new(),
+            pending_output: String::new(),
+            dropped_output_bytes: 0,
             exit_code: None,
         })
     }
@@ -1205,14 +1207,17 @@ impl SessionManagerServer {
                     while let Ok(chunk) = pane.output_rx.try_recv() {
                         if !chunk.is_empty() {
                             let data = String::from_utf8_lossy(&chunk).into_owned();
-                            pane.push_output_history(&data);
-                            events.push(ServerEvent::PtyOutput {
-                                session_id: *session_id,
-                                window_id: *window_id,
-                                pane_id: *pane_id,
-                                data,
-                            });
+                            pane.enqueue_output(&data);
                         }
+                    }
+
+                    if let Some(data) = pane.take_output_chunk() {
+                        events.push(ServerEvent::PtyOutput {
+                            session_id: *session_id,
+                            window_id: *window_id,
+                            pane_id: *pane_id,
+                            data,
+                        });
                     }
 
                     if pane.exit_code.is_none() {
@@ -1626,6 +1631,8 @@ mod tests {
                                         .expect("spawn pty"),
                                     output_rx: mpsc::unbounded_channel().1,
                                     output_history: String::new(),
+                                    pending_output: String::new(),
+                                    dropped_output_bytes: 0,
                                     exit_code: None,
                                 },
                             )]),

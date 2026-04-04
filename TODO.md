@@ -24,7 +24,7 @@
 - [x] Add structured error codes in daemon responses
 - [x] Add buffered PTY output snapshots for newly attached clients
 - [x] Add explicit state-change events for active window/pane selection
-- [ ] Add backpressure/output buffering strategy for busy PTYs
+- [x] Add backpressure/output buffering strategy for busy PTYs
 
 ## Daemon Runtime
 
