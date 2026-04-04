@@ -1,3 +1,5 @@
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::thread;
@@ -95,6 +97,20 @@ fn metadata_path(socket_path: &Path) -> PathBuf {
         .map(|name| format!("{}.meta.json", name.to_string_lossy()))
         .unwrap_or_else(|| "caterm.meta.json".to_string());
     socket_path.with_file_name(file_name)
+}
+
+fn raw_command(socket_path: &Path, request: serde_json::Value) -> serde_json::Value {
+    let mut stream = StdUnixStream::connect(socket_path).expect("connect raw socket");
+    writeln!(
+        stream,
+        "{}",
+        serde_json::to_string(&request).expect("serialize request")
+    )
+    .expect("write request");
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read response");
+    serde_json::from_str(&line).expect("decode response json")
 }
 
 #[test]
@@ -694,6 +710,24 @@ fn start_daemonize_launches_background_server() {
 }
 
 #[test]
+fn raw_command_response_includes_structured_error_code() {
+    let daemon = TestDaemon::start();
+
+    let response = raw_command(
+        &daemon.socket_path,
+        json!({
+            "command": "delete_window",
+            "session": "missing",
+            "target": "0"
+        }),
+    );
+
+    assert_eq!(response["protocol_version"], 1);
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["error_code"], "session_not_found");
+}
+
+#[test]
 fn concurrent_clients_can_create_and_list_without_conflicts() {
     let daemon = TestDaemon::start();
 
@@ -888,4 +922,53 @@ fn attach_streams_active_selection_events() {
         stdout.contains("Active pane changed to 3 in session 1, window 2"),
         "{stdout}"
     );
+}
+
+#[test]
+fn raw_attach_stream_uses_versioned_event_envelopes() {
+    let daemon = TestDaemon::start();
+
+    assert!(daemon.run(&["new-session", "work"]).status.success());
+    assert!(
+        daemon
+            .run(&["new-window", "work", "editor"])
+            .status
+            .success()
+    );
+
+    let mut stream = StdUnixStream::connect(&daemon.socket_path).expect("connect attach socket");
+    writeln!(
+        stream,
+        "{}",
+        serde_json::to_string(&json!({
+            "command": "attach",
+            "session": null,
+            "window": null,
+            "pane": null
+        }))
+        .expect("serialize attach")
+    )
+    .expect("write attach");
+
+    let select = daemon.run(&["select-window", "work", "editor"]);
+    assert!(select.status.success(), "{}", stdout_text(&select));
+
+    let mut reader = BufReader::new(stream);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read event line");
+        let value: serde_json::Value = serde_json::from_str(&line).expect("parse event json");
+        assert_eq!(value["protocol_version"], 1);
+
+        if value["event"]["type"] == "active_window_changed" {
+            assert_eq!(value["event"]["session_id"], 1);
+            assert_eq!(value["event"]["window_id"], 2);
+            break;
+        }
+
+        if Instant::now() >= deadline {
+            panic!("active_window_changed event not observed in time");
+        }
+    }
 }
