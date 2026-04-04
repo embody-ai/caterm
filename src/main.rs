@@ -1,5 +1,4 @@
-mod agent;
-mod protocol;
+mod config;
 mod pty;
 mod session_manager;
 
@@ -9,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use tokio::io::{self, AsyncWriteExt};
 use tracing::info;
 
-use crate::agent::Agent;
+use crate::config::DaemonConfig;
 use crate::session_manager::{
     ClientOptions, SessionManagerServer, SessionRequest, default_socket_path, is_server_running,
     send_client_request,
@@ -31,7 +30,7 @@ async fn main() -> Result<()> {
 
     init_tracing();
 
-    let config = agent::AgentConfig::from_env();
+    let config = DaemonConfig::from_env();
     let shell = config.shell.clone();
     let client_options = ClientOptions {
         socket_path: command
@@ -61,11 +60,6 @@ async fn main() -> Result<()> {
             info!(shell = %shell, socket = %client_options.socket_path.display(), "starting Caterm server");
             let mut server = SessionManagerServer::new(config, client_options.socket_path);
             server.run().await
-        }
-        Mode::Agent => {
-            info!(shell = %shell, "starting Caterm agent");
-            let mut agent = Agent::new(config)?;
-            agent.run().await
         }
         Mode::NewSession { name } => {
             run_client_command(&client_options, SessionRequest::CreateSession { name }).await
@@ -143,7 +137,6 @@ struct Command {
 #[derive(Debug, Default, Clone)]
 enum Mode {
     Start,
-    Agent,
     NewSession {
         name: Option<String>,
     },
@@ -197,10 +190,6 @@ impl Command {
                 }
                 "start" if !mode_set => {
                     command.mode = Mode::Start;
-                    mode_set = true;
-                }
-                "agent" if !mode_set => {
-                    command.mode = Mode::Agent;
                     mode_set = true;
                 }
                 "new-session" if !mode_set => {
@@ -292,7 +281,7 @@ fn print_version() {
 fn help_text() -> String {
     format!(
         "\
-CLI agent for Caterm
+Caterm daemon
 
 Usage:
   caterm [COMMAND] [OPTIONS]
@@ -307,7 +296,6 @@ Commands:
   kill-pane        Delete a pane by id or name within a window
   list             List the session/window/pane hierarchy
   stop             Stop the local Caterm server
-  agent            Run the JSON PTY agent mode
 
 Options:
   -h, --help       Print help
@@ -318,10 +306,7 @@ Environment:
   CATERM_SHELL     Override the shell used for the PTY session
   CATERM_SOCKET    Override the default Unix socket path
   SHELL            Fallback shell if CATERM_SHELL is not set
-  RUST_LOG         Configure tracing output
-
-Protocol:
-  `caterm agent` reads JSON client messages from stdin and writes JSON agent events to stdout."
+  RUST_LOG         Configure tracing output"
     )
 }
 

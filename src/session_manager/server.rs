@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{info, warn};
 
-use crate::agent::AgentConfig;
+use crate::config::DaemonConfig;
 use crate::pty::PtySession;
 
 use super::pane::Pane;
@@ -16,7 +16,7 @@ use super::session::Session;
 use super::window::Window;
 
 pub struct SessionManagerServer {
-    config: AgentConfig,
+    config: DaemonConfig,
     socket_path: PathBuf,
     sessions: BTreeMap<u64, Session>,
     next_session_id: u64,
@@ -25,7 +25,7 @@ pub struct SessionManagerServer {
 }
 
 impl SessionManagerServer {
-    pub fn new(config: AgentConfig, socket_path: PathBuf) -> Self {
+    pub fn new(config: DaemonConfig, socket_path: PathBuf) -> Self {
         Self {
             config,
             socket_path,
